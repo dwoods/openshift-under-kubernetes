@@ -15,6 +15,25 @@ class OpenshiftKubeDeployer:
         self.context_override = context_override
         self.enable_secure = enable_secure
         pass
+
+    def init_with_checks(kube_deployer):
+        print("Loading kube config...")
+        if not kube_deployer.load_and_check_config():
+            print("Unable to load/validate config.")
+            return False
+
+        print("Checking connectivity...")
+        if not kube_deployer.fetch_namespaces():
+            print("Connectivity looks bad, fix your connection!")
+            return False
+
+        print("Everything looks good, proceeding.")
+        print()
+        print("Collecting some initial cluster info...")
+        kube_deployer.fetch_info(skip_namespaces=True)
+        kube_deployer.print_openshift_basic_status()
+        return True
+
     def load_and_check_config(self):
         if not os.path.exists(self.config_path):
             print("Config does not exist at path " + self.config_path + "!")
