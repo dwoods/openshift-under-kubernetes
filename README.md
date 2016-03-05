@@ -1,8 +1,11 @@
 # Openshift under Kubernetes
 
-Deploys OpenShift Origin to an existing Kubernetes cluster.
+Deploys OpenShift Origin to an existing Kubernetes cluster. This is arguably the most ideal way to deploy OpenShift, for a few reasons:
 
-
+ - OpenShift Origin is a layer on top of Kubernetes
+ - Kubernetes is extremely flexible in the ways it can be deployed, with kube-up
+ - Allowing Kubernetes and OpenShift to be independently updated is ideal for feature iteration and stability
+ - This is much easier than dealing with Ansible under OpenShift v3.
 
 
 # Usage
