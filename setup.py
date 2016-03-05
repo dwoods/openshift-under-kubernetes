@@ -3,7 +3,7 @@ Deploys OpenShift Origin to an existing Kubernetes cluster.
 """
 from setuptools import find_packages, setup
 
-dependencies = ['click']
+dependencies = ['click', 'pykube']
 
 setup(
     name='openshift-under-kubernetes',
