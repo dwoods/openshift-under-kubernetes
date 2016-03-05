@@ -30,6 +30,10 @@ def info():
 @cli.command()
 def deploy():
     """Deploy OpenShift to the cluster."""
+    if kube_deployer.consider_openshift_deployed:
+        print("I think OpenShift is already deployed. Use undeploy first to remove it before installing it again.")
+        print("Consider if you really need a full redeploy. You can update without re-deploying!")
+        exit(1)
     pass
 
 # @cli.command()
