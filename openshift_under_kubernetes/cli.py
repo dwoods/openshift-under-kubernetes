@@ -34,15 +34,23 @@ def deploy():
         print("I think OpenShift is already deployed. Use undeploy first to remove it before installing it again.")
         print("Consider if you really need a full redeploy. You can update without re-deploying!")
         exit(1)
+    # Figure out how to grab the service account key
+    # Create the namespaces
+    # Create the templates and save them, not really because we need to, but for users to view them
+    # Allow the user to edit the openshit config last second
+    # Create the configs and replication controllers
+    # Wait for everything to go to the ready state
+    # If any crash loops happen point them out. Offer commands to debug. Link to troubleshooting.
+    # Once everything is running link the public IP to access.
     pass
 
-# @cli.command()
-# def undeploy():
-#   """Removes OpenShift from the cluster."""
+@cli.command()
+def undeploy():
+    """Removes OpenShift from the cluster."""
 
-# @cli.command()
-# def config():
-#   """Edits the OpenShift configs interactively."""
+@cli.command()
+def config():
+    """Edits the OpenShift configs interactively."""
 
 if __name__ == '__main__':
     cli()
