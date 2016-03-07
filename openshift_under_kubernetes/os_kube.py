@@ -104,21 +104,35 @@ class OpenshiftKubeDeployer:
             print("Waiting for namespace to terminate...")
         while wait_for_removed:
             try:
+                time.sleep(0.3)
                 if len(Namespace.objects(self.api).filter(selector={"name": "openshift-deploy"}).response["items"]) == 0:
                     break
-            except:
+            except ex:
                 break
 
-    def create_osdeploy_namespace(self):
-        print("Creating temporary openshift-deploy namespace...")
-        Namespace(self.api,
+    def build_namespace(self, name):
+        return Namespace(self.api,
         {
             "metadata":
             {
-                "name": "openshift-deploy"
+                "name": name
             },
             "spec": {}
-        }).create()
+        })
+
+    def create_namespace(self, name):
+        print("Creating " + name + " namespace...")
+        self.build_namespace(name).create()
+
+    def delete_namespace_byname(self, name):
+        print("Deleting " + name + " namespace...")
+        try:
+            self.build_namespace(name).delete()
+        except ex:
+            print("Ignoring potential error with delete: " + ex)
+
+    def create_osdeploy_namespace(self):
+        self.create_namespace("openshift-deploy")
 
     def create_servicekey_pod(self):
         print("Creating servicekey fetch pod...")
@@ -145,6 +159,14 @@ class OpenshiftKubeDeployer:
             }
         }).create()
 
+    def delete_servicekey_pod(self):
+        try:
+            obj = Pod.objects(self.api).filter(namespace="openshift-deploy", selector={"purpose": "get-servicekey"}).response["items"][0]
+            Pod(self.api, obj).delete()
+            print("Deleted get-servicekey pod.")
+        except ex:
+            print("Error deleting get-servicekey pod " + ex)
+            return
     def observe_servicekey_pod(self):
         print("Waiting for servicekey pod to start...")
         has_started = False

@@ -1,5 +1,6 @@
 import os
 import click
+import tempfile
 
 from os_kube import OpenshiftKubeDeployer
 
@@ -22,6 +23,9 @@ def cli(ctx, config, context, secure, openshift_version, y, interactive):
         print("Failed cursory checks, exiting.")
         exit(1)
     ctx.obj = ctx.kube_deployer
+    ctx.obj.temp_dir = tempfile.mkdtemp()
+    ctx.obj.auto_confirm = y
+    ctx.obj.is_interactive = interactive
 
 @cli.command()
 def info():
@@ -37,7 +41,25 @@ def deploy(ctx):
         print("Consider if you really need a full redeploy. You can update without re-deploying!")
         exit(1)
 
+    print()
+    if "openshift" in ctx.namespace_names or "openshift-origin" in ctx.namespace_names:
+        print("The namespaces 'openshift' and/or 'openshift-origin' exist, this indicates a potentially existing/broken install.")
+        if ctx.auto_confirm:
+            print("Auto confirm (-y) option set, clearing existing installation.")
+        else:
+            print("Really consider the decision you're about to make.")
+            if not click.confirm("Do you want to clear the existing installation?"):
+                print("Okay, cancelling.")
+                exit(1)
+
+        # Handle oddities with finalizers?
+        ctx.delete_namespace_byname("openshift")
+        ctx.delete_namespace_byname("openshift-origin")
+
     print("Preparing to execute deploy...")
+    print("Deploy temp dir: " + ctx.temp_dir)
+
+    # Locally pull the openshift images and verify docker works
 
     # Setup the deploy state namespace
     ctx.cleanup_osdeploy_namespace()
@@ -49,8 +71,17 @@ def deploy(ctx):
     # Get the key
     ctx.service_cert = ctx.observe_servicekey_pod()
 
+    # Kill the pod
+    ctx.delete_servicekey_pod()
+
+    # Save the key temporarily
+    with open(ctx.temp_dir + "/serviceaccounts.public.key", 'w') as f:
+        f.write(ctx.service_cert)
+
     # Create the namespaces
-    # Create the templates and save them, not really because we need to, but for users to view them
+    ctx.create_namespace("openshift-origin")
+
+    # Create the templates and save them
     # Allow the user to edit the openshit config last second
     # Create the configs and replication controllers
     # Wait for everything to go to the ready state
