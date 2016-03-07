@@ -1,6 +1,8 @@
 import os
 import pykube
 import requests
+import time
+import json
 
 from pykube.config import KubeConfig
 from pykube.http import HTTPClient
@@ -89,3 +91,78 @@ class OpenshiftKubeDeployer:
         if not skip_namespaces:
             self.fetch_namespaces()
         self.fetch_openshift_setup()
+
+    def cleanup_osdeploy_namespace(self):
+        wait_for_removed = False
+        for ns in self.namespace_list:
+            if ns["metadata"]["name"] == "openshift-deploy":
+                print("Cleaning up old openshift-deploy namespace.")
+                Namespace(self.api, ns).delete()
+                wait_for_removed = True
+                break
+        if wait_for_removed:
+            print("Waiting for namespace to terminate...")
+        while wait_for_removed:
+            try:
+                if len(Namespace.objects(self.api).filter(selector={"name": "openshift-deploy"}).response["items"]) == 0:
+                    break
+            except:
+                break
+
+    def create_osdeploy_namespace(self):
+        print("Creating temporary openshift-deploy namespace...")
+        Namespace(self.api,
+        {
+            "metadata":
+            {
+                "name": "openshift-deploy"
+            },
+            "spec": {}
+        }).create()
+
+    def create_servicekey_pod(self):
+        print("Creating servicekey fetch pod...")
+        Pod(self.api,
+        {
+            "metadata":
+            {
+                "name": "get-servicekey",
+                "labels":
+                {
+                    "purpose": "get-servicekey"
+                },
+                "namespace": "openshift-deploy"
+            },
+            "spec":
+            {
+                "containers":
+                [{
+                    "name": "get-servicekey",
+                    "image": "paralin/kube-get-servicekey:latest",
+                    "imagePullPolicy": "Always",
+                }],
+                "restartPolicy": "OnFailure"
+            }
+        }).create()
+
+    def observe_servicekey_pod(self):
+        print("Waiting for servicekey pod to start...")
+        has_started = False
+        while not has_started:
+            obj = Pod.objects(self.api).filter(namespace="openshift-deploy", selector={"purpose": "get-servicekey"}).response["items"][0]
+            stat = obj["status"]["phase"]
+            if stat in ["Running", "Pending"]:
+                has_started = False
+                time.sleep(0.5)
+            elif stat == "Succeeded":
+                has_started = True
+            else:
+                raise Exception("Unknown servicekey pod phase " + stat)
+
+        print("Checking logs...")
+        url = self.api.url + "/api/v1/namespaces/openshift-deploy/pods/get-servicekey/log"
+        cert = self.api.session.get(url).text
+        if "END PUBLIC KEY" not in cert:
+            raise Exception("get-servicekey container did not return the certificate.")
+        print("Retreived service public key successfully.")
+        return cert
