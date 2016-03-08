@@ -7,6 +7,14 @@ Deploys OpenShift Origin to an existing Kubernetes cluster. This is arguably the
  - Allowing Kubernetes and OpenShift to be independently updated is ideal for feature iteration and stability
  - This is much easier than dealing with Ansible under OpenShift v3.
 
+Requirements
+============
+
+This system requires the following things:
+
+ - A running working Kubernetes cluster.
+ - A kubeconfig for this cluster with long-term API authentication details at maximum administrative level. (default kubeconfig basically with basic-auth)
+
 # Deploy Process
 
 This is the process this system uses to deploy OpenShift:

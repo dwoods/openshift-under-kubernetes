@@ -3,6 +3,8 @@ import pykube
 import requests
 import time
 import json
+import base64
+import copy
 
 from pykube.config import KubeConfig
 from pykube.http import HTTPClient
@@ -93,22 +95,11 @@ class OpenshiftKubeDeployer:
         self.fetch_openshift_setup()
 
     def cleanup_osdeploy_namespace(self):
-        wait_for_removed = False
         for ns in self.namespace_list:
             if ns["metadata"]["name"] == "openshift-deploy":
                 print("Cleaning up old openshift-deploy namespace.")
-                Namespace(self.api, ns).delete()
-                wait_for_removed = True
-                break
-        if wait_for_removed:
-            print("Waiting for namespace to terminate...")
-        while wait_for_removed:
-            try:
-                time.sleep(0.3)
-                if len(Namespace.objects(self.api).filter(selector={"name": "openshift-deploy"}).response["items"]) == 0:
-                    break
-            except ex:
-                break
+                self.delete_namespace_byname("openshift-deploy", True)
+                return
 
     def build_namespace(self, name):
         return Namespace(self.api,
@@ -124,19 +115,23 @@ class OpenshiftKubeDeployer:
         print("Creating " + name + " namespace...")
         self.build_namespace(name).create()
 
-    def delete_namespace_byname(self, name):
+    def delete_namespace_byname(self, name, wait_for_delete=False):
         print("Deleting " + name + " namespace...")
         try:
             self.build_namespace(name).delete()
         except ex:
             print("Ignoring potential error with delete: " + ex)
+        if wait_for_delete:
+            print("Waiting for " + name + " to terminate...")
+        while wait_for_delete:
+            wait_for_delete = len(Namespace.objects(self.api).filter(selector={"name": "openshift-deploy"}).response["items"]) != 0
 
     def create_osdeploy_namespace(self):
         self.create_namespace("openshift-deploy")
 
     def create_servicekey_pod(self):
         print("Creating servicekey fetch pod...")
-        Pod(self.api,
+        po = Pod(self.api,
         {
             "metadata":
             {
@@ -157,30 +152,101 @@ class OpenshiftKubeDeployer:
                 }],
                 "restartPolicy": "OnFailure"
             }
-        }).create()
+        })
+        po.create()
+        return po
 
-    def delete_servicekey_pod(self):
-        try:
-            obj = Pod.objects(self.api).filter(namespace="openshift-deploy", selector={"purpose": "get-servicekey"}).response["items"][0]
-            Pod(self.api, obj).delete()
-            print("Deleted get-servicekey pod.")
-        except ex:
-            print("Error deleting get-servicekey pod " + ex)
-            return
+    def build_secret(self, name, namespace, kv):
+        print("Creating " + name + " secret...")
+        kv = copy.copy(kv)
+        for k in kv:
+            kv[k] = base64.b64encode(kv[k]).decode('ascii')
+        return Secret(self.api,
+        {
+            "metadata":
+            {
+                "name": name,
+                "namespace": namespace
+            },
+            "data": kv
+        })
 
-    def observe_servicekey_pod(self):
-        print("Waiting for servicekey pod to start...")
-        has_started = False
-        while not has_started:
-            obj = Pod.objects(self.api).filter(namespace="openshift-deploy", selector={"purpose": "get-servicekey"}).response["items"][0]
+    def create_config_pod(self, os_version="latest"):
+        print("Creating config generation pod...")
+        po = Pod(self.api,
+        {
+            "metadata":
+            {
+                "name": "generate-config",
+                "labels":
+                {
+                    "purpose": "generate-config"
+                },
+                "namespace": "openshift-deploy"
+            },
+            "spec":
+            {
+                "containers":
+                [{
+                    "name": "generate-config",
+                    "image": "openshift/origin:" + os_version,
+                    "imagePullPolicy": "Always",
+                    "command": ["/bin/bash"],
+                    "args": ["/etc/config_secret_script/create-config.sh"],
+                    "ports": [],
+                    "env":
+                    [{
+                        "name": "OPENSHIFT_INTERNAL_ADDRESS",
+                        "value": "https://" + self.os_internal_ip + ":8443"
+                    }, {
+                        "name": "OPENSHIFT_EXTERNAL_ADDRESS",
+                        "value": "https://" + self.os_external_ip + ":8443"
+                    }, {
+                        "name": "ETCD_ADDRESS",
+                        "value": "http://etcd:2379"
+                    }],
+                    "volumeMounts":
+                    [{
+                        "mountPath": "/etc/config_secret_script",
+                        "name": "config_secret_script",
+                        "readOnly": True
+                    }, {
+                        "mountPath": "/etc/kube_config",
+                        "name": "kube_config",
+                        "readOnly": True
+                    }]
+                }],
+                "volumes":
+                [{
+                    "name": "config_secret_script",
+                    "secret": {"secretName": "create-config-script"}
+                }, {
+                    "name": "kube_config",
+                    "secret": {"secretName": "kubeconfig"}
+                }],
+                "restartPolicy": "Never"
+            }
+        })
+        po.create()
+        return po
+
+    def wait_for_pod_succeed(self, pod):
+        print("Waiting for " + pod.obj["metadata"]["name"] + " pod to start...")
+        while True:
+            pod.reload()
+            obj = pod.obj
             stat = obj["status"]["phase"]
             if stat in ["Running", "Pending"]:
                 has_started = False
                 time.sleep(0.5)
             elif stat == "Succeeded":
-                has_started = True
+                break
             else:
                 raise Exception("Unknown servicekey pod phase " + stat)
+
+    def observe_servicekey_pod(self, pod, wait_for_start=True):
+        if wait_for_start:
+            self.wait_for_pod_succeed(pod)
 
         print("Checking logs...")
         url = self.api.url + "/api/v1/namespaces/openshift-deploy/pods/get-servicekey/log"
@@ -189,3 +255,43 @@ class OpenshiftKubeDeployer:
             raise Exception("get-servicekey container did not return the certificate.")
         print("Retreived service public key successfully.")
         return cert
+
+    def build_os_service(self, use_load_balancer):
+        return Service(self.api,
+        {
+            "metadata":
+            {
+                "name": "openshift",
+                "namespace": "openshift-origin"
+            },
+            "spec":
+            {
+                "ports":
+                [{
+                    "name": "web",
+                    "port": 8443,
+                    "targetPort": "web"
+                }],
+                "selector":
+                {
+                    "app": "openshift",
+                    "tier": "backend"
+                },
+                "type": "LoadBalancer" if use_load_balancer else "NodePort"
+            }
+        })
+
+    def create_os_service(self, use_load_balancer):
+        print("Creating 'openshift' service...")
+        srv = self.build_os_service(use_load_balancer)
+        srv.create()
+        return srv
+
+    def wait_for_loadbalancer(self, service):
+        while service.obj["spec"]["type"] == "LoadBalancer" \
+            and ("loadBalancer" not in service.obj["status"] \
+            or "ingress" not in service.obj["status"]["loadBalancer"] \
+            or len(service.obj["status"]["loadBalancer"]["ingress"]) < 1 \
+            or (("ip" not in service.obj["status"]["loadBalancer"]["ingress"][0] or len(service.obj["status"]["loadBalancer"]["ingress"][0]["ip"]) < 2)) and (("hostname" not in service.obj["status"]["loadBalancer"]["ingress"][0] or len(service.obj["status"]["loadBalancer"]["ingress"][0]["hostname"]) < 2))):
+            time.sleep(0.5)
+            service.reload()
