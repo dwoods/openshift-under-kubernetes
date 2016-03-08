@@ -494,7 +494,7 @@ class OpenshiftKubeDeployer:
 
     def fetch_config_to_dir(self, config_dir):
         print("Fetching config files to dir " + config_dir)
-        config_secret = ctx.build_secret("openshift-config", "openshift-origin", {})
+        config_secret = self.build_secret("openshift-config", "openshift-origin", {})
         config_secret.reload()
         config_secret_kv = config_secret.obj["data"]
         print("Got config with " + str(len(config_secret_kv)) + " files.")

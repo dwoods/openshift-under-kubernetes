@@ -25,15 +25,17 @@ This system requires the following things:
 
 This is the process this system uses to deploy OpenShift:
 
-- Fetch the ServiceAccount public key by creating a temporary namespace and pod and fetching via the pod logs.
+- Fetch the ServiceAccount public key by creating a temporary namespace and pod.
 - Create the `openshift-origin` namespace.
 - Create a secret containing the kubeconfig with administrative access
 - Create the "openshift" service and grab the internal and external addresses.
-- Run openshift with the "--write-config" option to generate the initial default config.
-- Create a `PersistentVolume` inside this namespace for storage of OpenShift data.
+- Run openshift with the "--write-config" option to generate the initial default config in a temporary namespace.
+- Use an existing `PersistentVolume` created by the user.
 - Create a `PersistentVolumeClaim` to claim this storage.
 - Create the single-node "etcd" cluster to store the openshift data.
 - Create the OpenShift replication controller.
+
+The cli allows you to interactively edit the config, among other features.
 
 # Usage
 
