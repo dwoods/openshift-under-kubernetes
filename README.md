@@ -27,8 +27,8 @@ This is the process this system uses to deploy OpenShift:
 - Run openshift with the "--write-config" option to generate the initial default config.
 - Create a `PersistentVolume` inside this namespace for storage of OpenShift data.
 - Create a `PersistentVolumeClaim` to claim this storage.
+- Create the single-node "etcd" cluster to store the openshift data.
 - Create the OpenShift replication controller.
-- Output some information about how to use oadm and whatnot.
 
 # Usage
 
