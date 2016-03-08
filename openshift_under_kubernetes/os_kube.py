@@ -167,6 +167,7 @@ class OpenshiftKubeDeployer:
         except ex:
             print("Error deleting get-servicekey pod " + ex)
             return
+
     def observe_servicekey_pod(self):
         print("Waiting for servicekey pod to start...")
         has_started = False

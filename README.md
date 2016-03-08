@@ -7,6 +7,20 @@ Deploys OpenShift Origin to an existing Kubernetes cluster. This is arguably the
  - Allowing Kubernetes and OpenShift to be independently updated is ideal for feature iteration and stability
  - This is much easier than dealing with Ansible under OpenShift v3.
 
+# Deploy Process
+
+This is the process this system uses to deploy OpenShift:
+
+- Fetch the ServiceAccount public key by creating a temporary namespace and pod and fetching via the pod logs.
+- Configure using a configuration template.
+- Give the user the option to edit this template before submitting it.
+- Create the `openshift-origin` namespace.
+- Create a `PersistentVolume` inside this namespace for storage of OpenShift data.
+- Create a `PersistentVolumeClaim` to claim this storage.
+- Create the etcd single-node cluster for the OpenShift system.
+- Setup the OpenShift service. Configure the system to use the internal cluster IP for internal communications and a LoadBalancer IP for the public communications.
+- Create the OpenShift replication controller.
+- Output some information about how to use oadm and whatnot.
 
 # Usage
 
