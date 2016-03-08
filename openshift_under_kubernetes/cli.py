@@ -268,6 +268,10 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
 def undeploy(ctx):
     """Removes OpenShift from the cluster."""
     print("Preparing to remove OpenShift...")
+    if not ctx.init_with_checks():
+        print("Failed cursory checks, exiting.")
+        exit(1)
+
     if ctx.auto_confirm:
         print("Auto confirm (-y) option set, clearing existing installation.")
     else:
