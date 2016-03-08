@@ -259,9 +259,9 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
     print(" == OpenShift Deployed ==")
     print("External IP: " + ctx.os_external_ip)
 
+    ctx.fetch_namespaces()
     ctx.cleanup_osdeploy_namespace()
     shutil.rmtree(ctx.temp_dir)
-    pass
 
 @cli.command()
 @click.pass_obj
