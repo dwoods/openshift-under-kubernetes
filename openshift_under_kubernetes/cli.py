@@ -5,6 +5,7 @@ import yaml
 import base64
 import tarfile
 import time
+import shutil
 
 from pkg_resources import resource_string, resource_listdir
 from subprocess import call
@@ -71,6 +72,7 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
         # Handle oddities with finalizers?
         ctx.delete_namespace_byname("openshift")
         ctx.delete_namespace_byname("openshift-origin")
+        time.sleep(1)
 
     print("Preparing to execute deploy...")
     print("Deploy temp dir: " + ctx.temp_dir)
@@ -153,7 +155,6 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
     # Generate the openshift config by running a temporary pod on the cluster
     print("Generating openshift config via cluster...")
     conf_pod = ctx.build_config_pod(ctx.os_version)
-    print(yaml.dump(conf_pod.obj))
     conf_pod.create()
     with open(ctx.temp_dir + "/config_bundle.tar.gz", 'wb') as f:
         conf_bundle = ctx.observe_config_pod(conf_pod)
@@ -165,6 +166,10 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
     tar = tarfile.open(ctx.temp_dir + "/config_bundle.tar.gz")
     tar.extractall(ctx.temp_dir + "/config/")
     tar.close()
+
+    # Move kubeconfig in
+    with open(ctx.temp_dir + "/config/external-master.kubeconfig", 'w') as f:
+        f.write(yaml.dump(ctx.config.doc))
 
     # Delete tarfile
     os.remove(ctx.temp_dir + "/config_bundle.tar.gz")
@@ -223,7 +228,7 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
     etcd_pod = None
     # Wait for the pod to exist
     while etcd_pod == None:
-        etcd_pods = Pod.objects(ctx.api).filter(selector={"app": "etcd"}).response["items"]
+        etcd_pods = Pod.objects(ctx.api).filter(selector={"app": "etcd"}, namespace="openshift-origin").response["items"]
         if len(etcd_pods) < 1:
             time.sleep(0.5)
             continue
@@ -241,7 +246,7 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
     openshift_pod = None
     # Wait for the pod to exist
     while openshift_pod == None:
-        pods = Pod.objects(ctx.api).filter(selector={"app": "openshift"}).response["items"]
+        pods = Pod.objects(ctx.api).filter(namespace="openshift-origin", selector={"app": "openshift"}).response["items"]
         if len(pods) < 1:
             time.sleep(0.5)
             continue
@@ -252,7 +257,9 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
 
     print()
     print(" == OpenShift Deployed ==")
-    print("External IP: " + ctx.external_os_ip)
+    print("External IP: " + ctx.os_external_ip)
+
+    shutil.rmtree(ctx.temp_dir)
     pass
 
 @cli.command()

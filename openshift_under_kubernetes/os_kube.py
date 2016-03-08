@@ -327,11 +327,19 @@ class OpenshiftKubeDeployer:
         # Fix ca
         ya["kubeletClientInfo"]["ca"] = "ca.crt"
         ya["kubeletClientInfo"]["certFile"] = "master.kubelet-client.crt"
-        ya["kubeletClientInfo"]["certFile"] = "master.kubelet-client.key"
+        ya["kubeletClientInfo"]["keyFile"] = "master.kubelet-client.key"
         ya["kubeletClientInfo"]["port"] = 10250
+
+        # Fix etcd client
+        ya["etcdClientInfo"]["ca"] = "etcd.server.crt"
+        ya["etcdClientInfo"]["certFile"] = "master.etcd-client.crt"
+        ya["etcdClientInfo"]["keyFile"] = "master.etcd-client.key"
 
         # Fix serviceAccountConfig
         ya["serviceAccountConfig"]["publicKeyFiles"] = ["serviceaccounts.public.key"]
+
+        # Fix path to kubeconfig
+        ya["masterClients"]["externalKubernetesKubeConfig"] = "external-master.kubeconfig"
 
         # Re-serialize to yaml
         return yaml.dump(ya, default_flow_style=False)
@@ -382,6 +390,9 @@ class OpenshiftKubeDeployer:
                             [{
                                 "name": "ETCD_NUM_MEMBERS",
                                 "value": "1"
+                            }, {
+                                "name": "ETCD_LISTEN_CLIENT_URLS",
+                                "value": "http://0.0.0.0:2379,http://0.0.0.0:4001"
                             }],
                             "volumeMounts":
                             [{
@@ -436,6 +447,7 @@ class OpenshiftKubeDeployer:
             "metadata":
             {
                 "name": "openshift",
+                "namespace": "openshift-origin",
                 "labels": {"app": "openshift", "tier": "backend"}
             },
             "spec":
@@ -448,19 +460,22 @@ class OpenshiftKubeDeployer:
                     {
                         "labels": {"app": "openshift", "tier": "backend"}
                     },
-                    "containers":
-                    [{
-                        "image": "openshift/origin:" + os_version,
-                        "name": "origin",
-                        "args": ["start", "master", "--config=/config/master-config.yaml"],
-                        "ports": [{"containerPort": 8443, "name": "web"}],
-                        "volumeMounts": [{"mountPath": "/config", "name": "config", "readOnly": True}]
-                    }],
-                    "volumes":
-                    [{
-                        "name": "config",
-                        "secret": {"secretName": "openshift-config"}
-                    }]
+                    "spec":
+                    {
+                        "containers":
+                        [{
+                            "image": "openshift/origin:" + os_version,
+                            "name": "origin",
+                            "args": ["start", "master", "--config=/config/master-config.yaml"],
+                            "ports": [{"containerPort": 8443, "name": "web"}],
+                            "volumeMounts": [{"mountPath": "/config", "name": "config", "readOnly": True}]
+                        }],
+                        "volumes":
+                        [{
+                            "name": "config",
+                            "secret": {"secretName": "openshift-config"}
+                        }]
+                    }
                 }
             }
         })
