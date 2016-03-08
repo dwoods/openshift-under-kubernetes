@@ -13,20 +13,20 @@ Requirements
 This system requires the following things:
 
  - A running working Kubernetes cluster.
- - A kubeconfig for this cluster with long-term API authentication details at maximum administrative level. (default kubeconfig basically with basic-auth)
+ - A kubeconfig for this cluster with long-term API authentication details at maximum administrative level.
+ - A Persistent Volume with at least 2Gi of space.
 
 # Deploy Process
 
 This is the process this system uses to deploy OpenShift:
 
 - Fetch the ServiceAccount public key by creating a temporary namespace and pod and fetching via the pod logs.
-- Configure using a configuration template.
-- Give the user the option to edit this template before submitting it.
 - Create the `openshift-origin` namespace.
+- Create a secret containing the kubeconfig with administrative access
+- Create the "openshift" service and grab the internal and external addresses.
+- Run openshift with the "--write-config" option to generate the initial default config.
 - Create a `PersistentVolume` inside this namespace for storage of OpenShift data.
 - Create a `PersistentVolumeClaim` to claim this storage.
-- Create the etcd single-node cluster for the OpenShift system.
-- Setup the OpenShift service. Configure the system to use the internal cluster IP for internal communications and a LoadBalancer IP for the public communications.
 - Create the OpenShift replication controller.
 - Output some information about how to use oadm and whatnot.
 

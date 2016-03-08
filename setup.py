@@ -3,11 +3,11 @@ Deploys OpenShift Origin to an existing Kubernetes cluster.
 """
 from setuptools import find_packages, setup
 
-dependencies = ['click', 'pykube']
+dependencies = ['click', 'pykube', 'pyyaml']
 
 setup(
     name='openshift-under-kubernetes',
-    version='0.0.5',
+    version='0.1.0',
     url='https://github.com/paralin/openshift-under-kubernetes',
     license='BSD',
     author='Christian Stewart',

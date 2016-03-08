@@ -5,10 +5,12 @@ import time
 import json
 import base64
 import copy
+import yaml
 
 from pykube.config import KubeConfig
 from pykube.http import HTTPClient
 from pykube.objects import Pod, Namespace, Service, ReplicationController, Secret
+from .more_objects import PersistentVolume, PersistentVolumeClaim
 
 '''
 Deploys OpenShift to Kubernetes
@@ -171,9 +173,9 @@ class OpenshiftKubeDeployer:
             "data": kv
         })
 
-    def create_config_pod(self, os_version="latest"):
+    def build_config_pod(self, os_version="latest"):
         print("Creating config generation pod...")
-        po = Pod(self.api,
+        return Pod(self.api,
         {
             "metadata":
             {
@@ -203,44 +205,56 @@ class OpenshiftKubeDeployer:
                         "value": "https://" + self.os_external_ip + ":8443"
                     }, {
                         "name": "ETCD_ADDRESS",
-                        "value": "http://etcd:2379"
+                        "value": "http://etcd:4001"
                     }],
                     "volumeMounts":
                     [{
                         "mountPath": "/etc/config_secret_script",
-                        "name": "config_secret_script",
+                        "name": "config-secret-script",
                         "readOnly": True
                     }, {
                         "mountPath": "/etc/kube_config",
-                        "name": "kube_config",
+                        "name": "kube-config",
                         "readOnly": True
                     }]
                 }],
                 "volumes":
                 [{
-                    "name": "config_secret_script",
+                    "name": "config-secret-script",
                     "secret": {"secretName": "create-config-script"}
                 }, {
-                    "name": "kube_config",
+                    "name": "kube-config",
                     "secret": {"secretName": "kubeconfig"}
                 }],
                 "restartPolicy": "Never"
             }
         })
-        po.create()
-        return po
 
     def wait_for_pod_succeed(self, pod):
-        print("Waiting for " + pod.obj["metadata"]["name"] + " pod to start...")
+        print("Waiting for " + pod.obj["metadata"]["name"] + " pod to finish...")
         while True:
             pod.reload()
             obj = pod.obj
             stat = obj["status"]["phase"]
             if stat in ["Running", "Pending"]:
-                has_started = False
                 time.sleep(0.5)
             elif stat == "Succeeded":
                 break
+            else:
+                raise Exception("Unexpected pod phase " + stat)
+
+    def wait_for_pod_running(self, pod):
+        print("Waiting for " + pod.obj["metadata"]["name"] + " pod to start...")
+        while True:
+            pod.reload()
+            obj = pod.obj
+            stat = obj["status"]["phase"]
+            if stat in ["Pending"]:
+                time.sleep(0.5)
+            elif stat == "Running":
+                break
+            elif stat == "Succeeded":
+                raise Exception("Unknown pod phase " + stat + ", expected this pod to be long-running.")
             else:
                 raise Exception("Unknown servicekey pod phase " + stat)
 
@@ -255,6 +269,16 @@ class OpenshiftKubeDeployer:
             raise Exception("get-servicekey container did not return the certificate.")
         print("Retreived service public key successfully.")
         return cert
+
+    def observe_config_pod(self, pod, wait_for_start=True):
+        if wait_for_start:
+            self.wait_for_pod_succeed(pod)
+
+        print("Checking logs...")
+        url = self.api.url + "/api/v1/namespaces/openshift-deploy/pods/" + pod.obj["metadata"]["name"] + "/log"
+        txt = self.api.session.get(url).text
+        print("Retreived config bundle successfully.")
+        return txt
 
     def build_os_service(self, use_load_balancer):
         return Service(self.api,
@@ -295,3 +319,159 @@ class OpenshiftKubeDeployer:
             or (("ip" not in service.obj["status"]["loadBalancer"]["ingress"][0] or len(service.obj["status"]["loadBalancer"]["ingress"][0]["ip"]) < 2)) and (("hostname" not in service.obj["status"]["loadBalancer"]["ingress"][0] or len(service.obj["status"]["loadBalancer"]["ingress"][0]["hostname"]) < 2))):
             time.sleep(0.5)
             service.reload()
+
+    def fix_master_config(self, conf):
+        # Parse to yaml
+        ya = yaml.load(conf)
+
+        # Fix ca
+        ya["kubeletClientInfo"]["ca"] = "ca.crt"
+        ya["kubeletClientInfo"]["certFile"] = "master.kubelet-client.crt"
+        ya["kubeletClientInfo"]["certFile"] = "master.kubelet-client.key"
+        ya["kubeletClientInfo"]["port"] = 10250
+
+        # Fix serviceAccountConfig
+        ya["serviceAccountConfig"]["publicKeyFiles"] = ["serviceaccounts.public.key"]
+
+        # Re-serialize to yaml
+        return yaml.dump(ya, default_flow_style=False)
+
+    def build_pvc(self, name, namespace, size):
+        return PersistentVolumeClaim(self.api,
+        {
+            "metadata":
+            {
+                "name": name,
+                "namespace": namespace
+            },
+            "spec":
+            {
+                "accessModes": ["ReadWriteOnce"],
+                "resources": {"requests": {"storage": size}}
+            }
+        })
+
+    def build_etcd_rc(self, pvcn):
+        return ReplicationController(self.api,
+        {
+            "metadata":
+            {
+                "name": "etcd",
+                "namespace": "openshift-origin"
+            },
+            "spec":
+            {
+                "replicas": 1,
+                "selector": {"app": "etcd", "purpose": "etcd"},
+                "template":
+                {
+                    "metadata":
+                    {
+                        "labels": {"app": "etcd", "purpose": "etcd"}
+                    },
+                    "spec":
+                    {
+                        "containers":
+                        [{
+                            "name": "etcd",
+                            "image": "openshift/etcd-20-centos7",
+                            "ports": [{"containerPort": 4001, "name": "client"}, {"containerPort": 7001, "name": "server"}],
+                            "command": ["/usr/local/bin/etcd"],
+                            "args": ["--data-dir", "/var/lib/etcd", "--name", "openshift-etcd1"],
+                            "env":
+                            [{
+                                "name": "ETCD_NUM_MEMBERS",
+                                "value": "1"
+                            }],
+                            "volumeMounts":
+                            [{
+                                "mountPath": "/var/lib/etcd",
+                                "name": "etcd-storage"
+                            }]
+                        }],
+                        "volumes":
+                        [{
+                            "name": "etcd-storage",
+                            "persistentVolumeClaim": {"claimName": pvcn}
+                        }],
+                        "restartPolicy": "Always",
+                        "dnsPolicy": "ClusterFirst"
+                    }
+                }
+            }
+        })
+
+    def build_etcd_service(self):
+        return Service(self.api,
+        {
+            "metadata":
+            {
+                "name": "etcd",
+                "namespace": "openshift-origin"
+            },
+            "spec":
+            {
+                "ports":
+                [{
+                    "name": "client",
+                    "port": 4001,
+                    "targetPort": "client"
+                }, {
+                    "name": "server",
+                    "port": 7001,
+                    "targetPort": "server"
+                }],
+                "selector":
+                {
+                    "app": "etcd",
+                    "purpose": "etcd"
+                },
+                "type": "ClusterIP"
+            }
+        })
+
+    def build_openshift_rc(self, os_version):
+        return ReplicationController(self.api,
+        {
+            "metadata":
+            {
+                "name": "openshift",
+                "labels": {"app": "openshift", "tier": "backend"}
+            },
+            "spec":
+            {
+                "replicas": 1,
+                "selector": {"app": "openshift", "tier": "backend"},
+                "template":
+                {
+                    "metadata":
+                    {
+                        "labels": {"app": "openshift", "tier": "backend"}
+                    },
+                    "containers":
+                    [{
+                        "image": "openshift/origin:" + os_version,
+                        "name": "origin",
+                        "args": ["start", "master", "--config=/config/master-config.yaml"],
+                        "ports": [{"containerPort": 8443, "name": "web"}],
+                        "volumeMounts": [{"mountPath": "/config", "name": "config", "readOnly": True}]
+                    }],
+                    "volumes":
+                    [{
+                        "name": "config",
+                        "secret": {"secretName": "openshift-config"}
+                    }]
+                }
+            }
+        })
+
+    def find_persistentvolume(self, pvname):
+        print("Checking for persistentvolume " + pvname + "...")
+        try:
+            url = self.api.url + "/api/v1/persistentvolumes/" + pvname
+            res = self.api.session.get(url)
+            if res.status_code != 200:
+                return None
+            return PersistentVolume(self.api, json.loads(res.text))
+        except:
+            return None

@@ -2,9 +2,17 @@ import os
 import click
 import tempfile
 import yaml
-from pkg_resources import resource_string, resource_listdir
+import base64
+import tarfile
+import time
 
+from pkg_resources import resource_string, resource_listdir
+from subprocess import call
 from .os_kube import OpenshiftKubeDeployer
+from .more_objects import PersistentVolume
+from pykube.objects import Pod
+
+EDITOR = os.environ.get('EDITOR','vim')
 
 @click.group()
 @click.option("--config", default="~/.kube/config", help="kube config path", envvar="KUBE_CONFIG", type=click.Path())
@@ -23,8 +31,8 @@ def cli(ctx, config, context, secure, openshift_version, y):
     ctx.obj.temp_dir = tempfile.mkdtemp()
     ctx.obj.auto_confirm = y
     ctx.obj.os_version = openshift_version
-    if ctx.obj.os_version.find("v") == 0:
-        ctx.obj.os_version = ctx.obj.os_version[1:]
+    if ctx.obj.os_version.find("v") != 0:
+        ctx.obj.os_version = "v" + ctx.obj.os_version
     ctx.obj.scripts_resource = __name__.split('.')[0] + ".resources.scripts"
 
 @cli.command()
@@ -34,12 +42,11 @@ def info(ctx):
     ctx.init_with_checks()
 
 @cli.command()
-@click.option("--persistent-volume", default=None, help="Path to persistent volume yaml", type=click.Path(exists=True))
-@click.option("--openshift-config", default=None, help="Path to OpenShift config yaml", type=click.Path(exists=True))
+@click.option("--persistent-volume", default="openshift-etcd1", prompt=True, help="Name of existing PersistentVolume of at least 2Gi size for storage")
 @click.option("--public-hostname", default=None, help="public hostname that will be DNSd to the public IP", envvar="OPENSHIFT_PUBLIC_DNS")
 @click.option("--load-balancer/--no-load-balancer", default=True, help="use load balancer, otherwise node port", envvar="OPENSHIFT_CREATE_LOADBALANCER")
 @click.pass_obj
-def deploy(ctx, persistent_volume, openshift_config, load_balancer, public_hostname):
+def deploy(ctx, persistent_volume, load_balancer, public_hostname):
     """Deploy OpenShift to the cluster."""
     if not ctx.init_with_checks():
         print("Failed cursory checks, exiting.")
@@ -65,23 +72,17 @@ def deploy(ctx, persistent_volume, openshift_config, load_balancer, public_hostn
         ctx.delete_namespace_byname("openshift")
         ctx.delete_namespace_byname("openshift-origin")
 
-    # Preliminary questions
-    if openshift_config != None:
-        print("Using specified config path as openshift config overrides.")
-    else:
-        print("No openshift config specified, will use defaults.")
-
-    if persistent_volume == None:
-        print("Persistent volume file not specified, will use HostDir on default.")
-    else:
-        print("Will use PersistentVolume as per spec in specified path.")
-
     print("Preparing to execute deploy...")
     print("Deploy temp dir: " + ctx.temp_dir)
 
     # Setup the deploy state namespace
     ctx.cleanup_osdeploy_namespace()
     ctx.create_osdeploy_namespace()
+
+    # Check the persistentvolume exists
+    if ctx.find_persistentvolume(persistent_volume) == None:
+        print(" [!] persistentvolume with name " + persistent_volume + " does not exist. Did you create it?")
+        exit(1)
 
     # Grab the service account key
     servicekey_pod = ctx.create_servicekey_pod()
@@ -115,8 +116,10 @@ def deploy(ctx, persistent_volume, openshift_config, load_balancer, public_hostn
 
     tmp = os_service.obj["status"]["loadBalancer"]["ingress"][0]
     external_os_ip = None
+    external_is_hostname = False
     if "hostname" in tmp:
         external_os_ip = tmp["hostname"]
+        external_is_hostname = True
     else:
         external_os_ip = tmp["ip"]
     internal_os_ip = os_service.obj["spec"]["clusterIP"]
@@ -125,6 +128,14 @@ def deploy(ctx, persistent_volume, openshift_config, load_balancer, public_hostn
 
     print("External OpenShift IP: " + external_os_ip)
     print("Internal OpenShift IP: " + internal_os_ip)
+
+    if public_hostname != None:
+        print("You need to DNS map like this:")
+        if external_is_hostname:
+            print(public_hostname + ".\t300\tIN\tCNAME\t" + external_os_ip)
+        else:
+            print(public_hostname + ".\t300\tIN\tA\t" + external_os_ip)
+        ctx.os_external_ip = public_hostname
 
     # Create a 'secret' containing the script to run to config.
     create_config_script = (resource_string(ctx.scripts_resource, 'create-config.sh'))
@@ -141,18 +152,107 @@ def deploy(ctx, persistent_volume, openshift_config, load_balancer, public_hostn
 
     # Generate the openshift config by running a temporary pod on the cluster
     print("Generating openshift config via cluster...")
-    conf_pod = ctx.create_config_pod(ctx.os_version)
-    #conf = ctx.observe_config_pod()
-    #conf_pod.delete()
+    conf_pod = ctx.build_config_pod(ctx.os_version)
+    print(yaml.dump(conf_pod.obj))
+    conf_pod.create()
+    with open(ctx.temp_dir + "/config_bundle.tar.gz", 'wb') as f:
+        conf_bundle = ctx.observe_config_pod(conf_pod)
+        conf_bundle_data = base64.b64decode(conf_bundle)
+        f.write(conf_bundle_data)
+    conf_pod.delete()
+
+    # Extract
+    tar = tarfile.open(ctx.temp_dir + "/config_bundle.tar.gz")
+    tar.extractall(ctx.temp_dir + "/config/")
+    tar.close()
+
+    # Delete tarfile
+    os.remove(ctx.temp_dir + "/config_bundle.tar.gz")
+
+    # Do some processing on the master-config yaml
+    conf = None
+    with open(ctx.temp_dir + '/config/master-config.yaml') as f:
+        conf = f.read()
+    conf = ctx.fix_master_config(conf)
+
+    # Write the serviceaccounts file again
+    with open(ctx.temp_dir + "/config/serviceaccounts.public.key", 'w') as f:
+        f.write(ctx.service_cert)
+
+    # Write the fixed master config
+    with open(ctx.temp_dir + "/config/master-config.yaml", 'w') as f:
+        f.write(conf)
 
     # Allow the user to edit the openshift config last second
+    print("Generated updated master-config.yaml.")
+    if ctx.auto_confirm:
+        print("Auto confirm (-y) option set, skipping master-config.yaml edit opportunity.")
+    else:
+        if click.confirm("Do you want to edit master-config.yaml?"):
+            call([EDITOR, ctx.temp_dir + "/config/master-config.yaml"])
 
-    # Create the configs and replication controllers
-    # Wait for everything to go to the ready state
-    # If any crash loops happen point them out. Offer commands to debug. Link to troubleshooting.
-    # Once everything is running link the public IP to access.
-    # Ask if they want to setup the initial admin. If so, keep checking the user list until the first user signs in.
-    # Give that user admin
+    # Cleanup a bit
+    kubeconfig_secret.delete()
+    create_config_secret.delete()
+
+    # Serialize the config to a secret
+    openshift_config_kv = {}
+    for filen in os.listdir(ctx.temp_dir + "/config"):
+        with open(ctx.temp_dir + "/config/" + filen, 'rb') as f:
+            openshift_config_kv[filen] = f.read()
+    openshift_config_secret = ctx.build_secret("openshift-config", "openshift-origin", openshift_config_kv)
+
+    # Save the secret
+    openshift_config_secret.create()
+
+    # Starting etcd setup... build PersistentVolumeClaim
+    etcd_pvc = ctx.build_pvc("openshift-etcd1", "openshift-origin", "2Gi")
+    etcd_pvc.create()
+
+    # Create the etcd controller
+    etcd_rc = ctx.build_etcd_rc("openshift-etcd1")
+    etcd_svc = ctx.build_etcd_service()
+
+    print("Creating etcd service...")
+    etcd_svc.create()
+
+    print("Creating etcd controller...")
+    etcd_rc.create()
+
+    print("Waiting for etcd pod to be created...")
+    etcd_pod = None
+    # Wait for the pod to exist
+    while etcd_pod == None:
+        etcd_pods = Pod.objects(ctx.api).filter(selector={"app": "etcd"}).response["items"]
+        if len(etcd_pods) < 1:
+            time.sleep(0.5)
+            continue
+        etcd_pod = Pod(ctx.api, etcd_pods[0])
+
+    # Wait for it to run
+    ctx.wait_for_pod_running(etcd_pod)
+
+    # Create the controller config
+    print("Creating openshift replication controller...")
+    openshift_rc = ctx.build_openshift_rc(ctx.os_version)
+    openshift_rc.create()
+
+    print("Waiting for openshift pod to be created...")
+    openshift_pod = None
+    # Wait for the pod to exist
+    while openshift_pod == None:
+        pods = Pod.objects(ctx.api).filter(selector={"app": "openshift"}).response["items"]
+        if len(pods) < 1:
+            time.sleep(0.5)
+            continue
+        openshift_pod = Pod(ctx.api, pods[0])
+
+    # Wait for it to run
+    ctx.wait_for_pod_running(openshift_pod)
+
+    print()
+    print(" == OpenShift Deployed ==")
+    print("External IP: " + ctx.external_os_ip)
     pass
 
 @cli.command()
