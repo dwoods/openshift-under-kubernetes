@@ -42,18 +42,21 @@ To use it:
 
 This will output:
 
-    Usage: openshift-under-kubernetes [OPTIONS] COMMAND [ARGS]...
+    Usage: openshift_under_kubernetes [OPTIONS] COMMAND [ARGS]...
 
     Options:
       --config PATH             kube config path
       --context TEXT            kube context
       --openshift-version TEXT  force openshift version (default 1.1.3)
       --secure / --no-secure    enables https checking
-      -y                        auto-confirm yes for all questions
+      -y                        auto-answer for all confirmations
       --help                    Show this message and exit.
 
     Commands:
-      deploy  Deploy OpenShift to the cluster.
-      info    Show cluster information
+      deploy      Deploy OpenShift to the cluster.
+      editconfig  Interactively edits master-config.yaml
+      getconfig   Writes the entire openshift config to a...
+      info        Show cluster information
+      undeploy    Removes OpenShift from the cluster.
 
-You can get started by running `openshift-under-kubernetes info` to check that the tool can properly communicate with your cluster.
+You can get started by running `openshift-under-kubernetes info` to check that the tool can properly communicate with your cluster. Then, use "deploy" to publish a new openshift cluster.

@@ -29,7 +29,6 @@ def cli(ctx, config, context, secure, openshift_version, y):
 
     ctx.kube_deployer = OpenshiftKubeDeployer(os.path.expanduser(config), context, secure)
     ctx.obj = ctx.kube_deployer
-    ctx.obj.temp_dir = tempfile.mkdtemp()
     ctx.obj.auto_confirm = y
     ctx.obj.os_version = openshift_version
     if ctx.obj.os_version.find("v") != 0:
@@ -74,6 +73,7 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
         ctx.delete_namespace_byname("openshift-origin")
         time.sleep(1)
 
+    ctx.temp_dir = tempfile.mkdtemp()
     print("Preparing to execute deploy...")
     print("Deploy temp dir: " + ctx.temp_dir)
 
@@ -280,16 +280,11 @@ def undeploy(ctx):
     print("See: https://github.com/paralin/openshift-under-kubernetes/blob/master/REMOVING_OPENSHIFT.md")
 
 @cli.command()
-@click.pass_obj
-def getconfig(ctx):
-    """Downloads the entire openshift config to a local directory."""
-
-@cli.command()
 @click.option("--config-output-dir", default=".", help="directory to write the openshift config", envvar="KUBE_CONFIG_OUTPUT_DIR", type=click.Path(exists=True), prompt=True)
 @click.pass_obj
 def getconfig(ctx, config_output_dir):
-    config_dir = config_output_dir
     """Writes the entire openshift config to a directory for inspection."""
+    config_dir = config_output_dir
     if not ctx.init_with_checks():
         print("Failed cursory checks, exiting.")
         exit(1)
@@ -297,22 +292,77 @@ def getconfig(ctx, config_output_dir):
     if not ctx.consider_openshift_deployed:
         print("I think OpenShift is not yet deployed. Use deploy first to create it.")
         exit(1)
-    config_secret = ctx.build_secret("openshift-config", "openshift-origin", {})
-    config_secret.reload()
-    config_secret_kv = config_secret.obj["data"]
-    print("Got config with " + str(len(config_secret_kv)) + " files.")
+    ctx.fetch_config_to_dir(config_dir)
 
-    # deserialize base64
-    for k in config_secret_kv:
-        config_secret_kv[k] = base64.b64decode(config_secret_kv[k]).decode('ascii')
+@cli.command()
+@click.pass_obj
+def editconfig(ctx):
+    """Interactively edits master-config.yaml"""
+    ctx.temp_dir = tempfile.mkdtemp()
+    if ctx.auto_confirm:
+        print("Note: -y option is not supported for purely interactive commands.")
+        ctx.auto_confirm = False
 
-    # write files
-    for k in config_secret_kv:
-        print("Writing " + k + " to " + config_dir)
-        with open(config_dir + "/" + k, 'w') as f:
-            f.write(config_secret_kv[k])
+    if not ctx.init_with_checks():
+        print("Failed cursory checks, exiting.")
+        exit(1)
 
-    print("Done fetching config.")
+    if not ctx.consider_openshift_deployed:
+        print("I think OpenShift is not yet deployed. Use deploy first to create it.")
+        exit(1)
+
+    old_secret = ctx.fetch_config_to_dir(ctx.temp_dir)
+    mc_path = ctx.temp_dir + "/master-config.yaml"
+    if not os.path.exists(mc_path):
+        print("Fetched config files but they don't contain master-config.yaml, something's wrong. Try getconfig.")
+        shutil.rmtree(ctx.temp_dir)
+        exit(1)
+
+    last_mtime = os.path.getmtime(mc_path)
+    print("Config files are at: " + ctx.temp_dir)
+    print("Feel free to edit as you will...")
+    print("Launching editor...")
+    call([EDITOR, mc_path])
+    now_mtime = os.path.getmtime(mc_path)
+    if now_mtime == last_mtime:
+        print("No changes made, exiting.")
+        shutil.rmtree(ctx.temp_dir)
+        exit(0)
+
+    if not click.confirm("Do you want to upload the changed config files?"):
+        print("Okay, cancelling.")
+        shutil.rmtree(ctx.temp_dir)
+        exit(0)
+
+    print("Preparing to upload config files...")
+    # Serialize the config to a secret
+    openshift_config_kv = {}
+    for filen in os.listdir(ctx.temp_dir):
+        with open(ctx.temp_dir + "/" + filen, 'rb') as f:
+            openshift_config_kv[filen] = f.read()
+    openshift_config_secret = ctx.build_secret("openshift-config", "openshift-origin", openshift_config_kv)
+    openshift_config_secret._original_obj = old_secret.obj
+
+    print("Attempting to patch secret...")
+    openshift_config_secret.update()
+    print("Updates applied.")
+
+    if not click.confirm("Do you want to restart openshift to apply the changes?"):
+        print("Okay, I'm done. Have a nice day!")
+        shutil.rmtree(ctx.temp_dir)
+        exit(0)
+
+    print("Restarting openshift pod...")
+    try:
+        pods = Pod.objects(ctx.api).filter(namespace="openshift-origin", selector={"app": "openshift"}).response["items"]
+        if len(pods) >= 1:
+            openshift_pod = Pod(ctx.api, pods[0])
+            print("Deleting pod " + openshift_pod.obj["metadata"]["name"] + "...")
+            openshift_pod.delete()
+    except:
+        print("Something went wrong restarting openshift, do it yourself please!")
+
+    shutil.rmtree(ctx.temp_dir)
 
 def main():
     cli()

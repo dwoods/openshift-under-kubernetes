@@ -491,3 +491,23 @@ class OpenshiftKubeDeployer:
             return PersistentVolume(self.api, json.loads(res.text))
         except:
             return None
+
+    def fetch_config_to_dir(self, config_dir):
+        print("Fetching config files to dir " + config_dir)
+        config_secret = ctx.build_secret("openshift-config", "openshift-origin", {})
+        config_secret.reload()
+        config_secret_kv = config_secret.obj["data"]
+        print("Got config with " + str(len(config_secret_kv)) + " files.")
+
+        # deserialize base64
+        for k in config_secret_kv:
+            config_secret_kv[k] = base64.b64decode(config_secret_kv[k]).decode('ascii')
+
+        # write files
+        for k in config_secret_kv:
+            print("Writing " + k + " to " + config_dir)
+            with open(config_dir + "/" + k, 'w') as f:
+                f.write(config_secret_kv[k])
+
+        print("Done fetching config.")
+        return config_secret
