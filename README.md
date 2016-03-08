@@ -1,9 +1,9 @@
 # Openshift under Kubernetes
 
 
-![](https://img.shields.io/pypi/dm/openshift-under-kubernetes.svg)
-![](https://img.shields.io/pypi/v/openshift-under-kubernetes.svg)
-![](https://travis-ci.org/paralin/openshift-under-kubernetes.svg)
+[![](https://img.shields.io/pypi/dm/openshift-under-kubernetes.svg)](https://pypi.python.org/pypi/openshift-under-kubernetes/)
+[![](https://img.shields.io/pypi/v/openshift-under-kubernetes.svg)](https://pypi.python.org/pypi/openshift-under-kubernetes/)
+[![](https://travis-ci.org/paralin/openshift-under-kubernetes.svg)](https://travis-ci.org/paralin/openshift-under-kubernetes/)
 
 Deploys OpenShift Origin to an existing Kubernetes cluster. This is arguably the most ideal way to deploy OpenShift, for a few reasons:
 
