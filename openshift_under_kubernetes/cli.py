@@ -70,7 +70,7 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
                 exit(1)
 
         # Handle oddities with finalizers?
-        ctx.delete_namespace_byname("openshift")
+        # todo: delete "openshift" and "openshift-infra" namespaces
         ctx.delete_namespace_byname("openshift-origin")
         time.sleep(1)
 
@@ -259,16 +259,60 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
     print(" == OpenShift Deployed ==")
     print("External IP: " + ctx.os_external_ip)
 
+    ctx.cleanup_osdeploy_namespace()
     shutil.rmtree(ctx.temp_dir)
     pass
 
 @cli.command()
-def undeploy():
+@click.pass_obj
+def undeploy(ctx):
     """Removes OpenShift from the cluster."""
+    print("Preparing to remove OpenShift...")
+    if ctx.auto_confirm:
+        print("Auto confirm (-y) option set, clearing existing installation.")
+    else:
+        print("Really consider the decision you're about to make.")
+        if not click.confirm("Do you want to clear the existing installation?"):
+            print("Okay, cancelling.")
+            exit(1)
+    ctx.delete_namespace_byname("openshift-origin")
+    print("Note: namespaces with openshift finalizer will need to be manually deleted if desired.")
+    print("See: https://github.com/paralin/openshift-under-kubernetes/blob/master/REMOVING_OPENSHIFT.md")
 
 @cli.command()
-def config():
-    """Edits the OpenShift configs interactively."""
+@click.pass_obj
+def getconfig(ctx):
+    """Downloads the entire openshift config to a local directory."""
+
+@cli.command()
+@click.option("--config-output-dir", default=".", help="directory to write the openshift config", envvar="KUBE_CONFIG_OUTPUT_DIR", type=click.Path(exists=True), prompt=True)
+@click.pass_obj
+def getconfig(ctx, config_output_dir):
+    config_dir = config_output_dir
+    """Writes the entire openshift config to a directory for inspection."""
+    if not ctx.init_with_checks():
+        print("Failed cursory checks, exiting.")
+        exit(1)
+
+    if not ctx.consider_openshift_deployed:
+        print("I think OpenShift is not yet deployed. Use deploy first to create it.")
+        exit(1)
+    config_secret = ctx.build_secret("openshift-config", "openshift-origin", {})
+    config_secret.reload()
+    config_secret_kv = config_secret.obj["data"]
+    print("Got config with " + str(len(config_secret_kv)) + " files.")
+
+    # deserialize base64
+    for k in config_secret_kv:
+        config_secret_kv[k] = base64.b64decode(config_secret_kv[k]).decode('ascii')
+
+    # write files
+    for k in config_secret_kv:
+        print("Writing " + k + " to " + config_dir)
+        with open(config_dir + "/" + k, 'w') as f:
+            f.write(config_secret_kv[k])
+
+    print("Done fetching config.")
 
 def main():
     cli()

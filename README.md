@@ -32,6 +32,10 @@ This is the process this system uses to deploy OpenShift:
 
 # Usage
 
+To install it:
+
+    $ pip install openshift-under-kubernetes
+
 To use it:
 
     $ openshift-under-kubernetes --help

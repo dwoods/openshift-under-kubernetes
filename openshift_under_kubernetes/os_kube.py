@@ -82,8 +82,9 @@ class OpenshiftKubeDeployer:
         self.has_openshift_ns = "openshift-origin" in self.namespace_names
         # Check the replication controller
         try:
-            self.openshift_rc = ReplicationController.objects(self.api).filter(namespace="openshift-origin", selector={"name": "openshift"}).get()
-        except:
+            self.openshift_rc = ReplicationController.objects(self.api).filter(namespace="openshift-origin", selector={"app": "openshift"}).response["items"][0]
+        except Exception as ex:
+            print(ex)
             self.openshift_rc = None
         self.consider_openshift_deployed = self.has_openshift_ns and self.openshift_rc != None
 
@@ -121,7 +122,7 @@ class OpenshiftKubeDeployer:
         print("Deleting " + name + " namespace...")
         try:
             self.build_namespace(name).delete()
-        except ex:
+        except Exception as ex:
             print("Ignoring potential error with delete: " + ex)
         if wait_for_delete:
             print("Waiting for " + name + " to terminate...")
