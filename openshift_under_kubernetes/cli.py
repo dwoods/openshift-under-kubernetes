@@ -39,7 +39,7 @@ def cli(ctx, config, context, secure, openshift_version, y):
 @click.pass_obj
 def info(ctx):
     """Show cluster information"""
-    ctx.init_with_checks()
+    exit(0 if ctx.init_with_checks() and ctx.consider_openshift_deployed else 1)
 
 @cli.command()
 @click.option("--persistent-volume", default="openshift-etcd1", prompt=True, help="Name of existing PersistentVolume of at least 2Gi size for storage")

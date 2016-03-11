@@ -7,7 +7,7 @@ dependencies = ['click', 'pykube', 'pyyaml']
 
 setup(
     name='openshift-under-kubernetes',
-    version='1.0.3',
+    version='1.0.4',
     url='https://github.com/paralin/openshift-under-kubernetes',
     license='BSD',
     author='Christian Stewart',
