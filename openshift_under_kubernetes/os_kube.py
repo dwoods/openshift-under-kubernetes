@@ -466,6 +466,103 @@ class OpenshiftKubeDeployer:
             }
         })
 
+    def build_registry_rc(self, ca_data, client_cert_data, server, namespace):
+        return ReplicationController(self.api,
+        {
+            "metadata":
+            {
+                "labels":
+                {
+                    "app": "registry",
+                    "role": "registry",
+                    "tier": "backend",
+                    # Not sure if this label is important
+                    "docker-registry": "default"
+                },
+                "name": "cluster-registry",
+                "namespace": namespace
+            },
+            "spec":
+            {
+                "replicas": 1,
+                "selector":
+                {
+                    "app": "registry",
+                    "role": "registry",
+                    "tier": "backend"
+                },
+                "template":
+                {
+                    "metadata":
+                    {
+                        # I believe selector is filled with this on default
+                        # Consider removing the extra info
+                        "labels":
+                        {
+                            "app": "registry",
+                            "role": "registry",
+                            "tier": "backend"
+                        }
+                    },
+                    "spec":
+                    {
+                        "containers":
+                        [{
+                            "name": "registry",
+                            # Hardcode this for now. Allow an option later.
+                            # This is because the env might need changing with newer versions
+                            "image": "openshift/origin-docker-registry:v1.1.3",
+                            "imagePullPolicy": "IfNotPresent",
+                            "livenessProbe":
+                            {
+                                "failureThreshold": 3,
+                                "httpGet":
+                                {
+                                    "path": "/healthz",
+                                    "port": 5000,
+                                    "scheme": "HTTP"
+                                },
+                                "initialDelaySeconds": 10,
+                                "periodSeconds": 10,
+                                "successThreshold": 1,
+                                "timeoutSeconds": 5
+                            },
+                            "ports": [{"containerPort": 5000, "protocol": "TCP", "name": "registry"}],
+                            "volumeMounts": [{"mountPath": "/registry", "name": "registry-storage"}],
+                            "env":
+                            [{
+                                "name": "OPENSHIFT_CA_DATA",
+                                "value": ca_data
+                            }, {
+                                "name": "OPENSHIFT_CERT_DATA",
+                                "value": client_cert_data
+                            }, {
+                                "name": "OPENSHIFT_INSECURE",
+                                "value": server.startswith("http://")
+                            }, {
+                                "name": "OPENSHIFT_KEY_DATA",
+                                "value": client_cert_data
+                            }, {
+                                "name": "OPENSHIFT_MASTER",
+                                "value": server
+                            }, {
+                                # I'm guessing this tricks the registry into binding to port 5000
+                                # Without actually setting an address
+                                "name": "REGISTRY_HTTP_ADDR",
+                                "value": ":5000"
+                            }, {
+                                "name": "REGISTRY_HTTP_NET",
+                                "value": "tcp"
+                            }, {
+                                "name": "REGISTRY_HTTP_SECRET",
+                                "value": "secret"
+                            }]
+                        }]
+                    }
+                }
+            }
+        })
+
     def build_openshift_rc(self, os_version):
         return ReplicationController(self.api,
         {

@@ -42,7 +42,7 @@ def info(ctx):
     exit(0 if ctx.init_with_checks() and ctx.consider_openshift_deployed else 1)
 
 @cli.command()
-@click.option("--persistent-volume", default="openshift-etcd1", prompt=True, help="Name of existing PersistentVolume of at least 2Gi size for storage")
+@click.option("--persistent-volume", default="openshift-etcd1", help="Name of existing PersistentVolume of at least 2Gi size for storage")
 @click.option("--create-volume/--no-create-volume", default=False, help="tell Kubernetes to create the volume (alpha feature)", envvar="OPENSHIFT_AUTOCREATE_VOLUME")
 @click.option("--public-hostname", default=None, help="public hostname that will be DNSd to the public IP", envvar="OPENSHIFT_PUBLIC_DNS")
 @click.option("--load-balancer/--no-load-balancer", default=True, help="use load balancer, otherwise node port", envvar="OPENSHIFT_CREATE_LOADBALANCER")
@@ -298,6 +298,64 @@ def getconfig(ctx, config_output_dir):
         print("I think OpenShift is not yet deployed. Use deploy first to create it.")
         exit(1)
     ctx.fetch_config_to_dir(config_dir)
+
+@cli.command()
+@click.option("--persistent-volume", default="openshift-registry", help="Name of existing PersistentVolume of at least 2Gi size for storage")
+@click.option("--create-volume/--no-create-volume", default=False, help="tell Kubernetes to create the volume (alpha feature)", envvar="OPENSHIFT_AUTOCREATE_REGISTRY_VOLUME")
+@click.pass_obj
+def deployregistry(ctx, persistent_volume, create_volume):
+    """Deploy an OpenShift Registry to the cluster."""
+    if not ctx.init_with_checks():
+        print("Failed cursory checks, exiting.")
+        exit(1)
+
+    if not ctx.consider_openshift_deployed:
+        print("OpenShift doesn't seem to be deployed.")
+        print("Please deploy it first.")
+        exit(1)
+
+    print()
+    if "openshift-registry" in ctx.namespace_names:
+        print("The namespace 'openshift-registry' exists, this indicates a potentially existing/broken registry.")
+        print("Refusing to continue, you should address this manually.")
+        exit(1)
+
+    ctx.temp_dir = tempfile.mkdtemp()
+    print("Preparing to execute deploy...")
+    print("Deploy temp dir: " + ctx.temp_dir)
+
+    # Check the persistentvolume exists
+    if not create_volume and ctx.find_persistentvolume(persistent_volume) == None:
+        print(" [!] persistentvolume with name " + persistent_volume + " does not exist. Did you create it?")
+        exit(1)
+
+    # Fetch the config to the local dir
+    ctx.fetch_config_to_dir(ctx.temp_dir)
+
+    # Grab the registry config object
+    reg_config = None
+    with open(ctx.temp_dir + "/openshift-registry.kubeconfig") as f:
+        reg_config = yaml.load(f)
+
+    # Create the namespaces
+    ctx.create_namespace("openshift-registry")
+
+    # Build the registry replication controller
+    # I do this this way because I would prefer to not use a deployment here.
+    reg_rc = ctx.build_registry_rc(reg_config, "openshift-registry")
+
+    # Build the secret
+    create_config_secret_kv = {"create-config.sh": create_config_script}
+    create_config_secret = ctx.build_secret("create-config-script", "openshift-deploy", create_config_secret_kv)
+    create_config_secret.create()
+
+    # Build the secret
+    registry_config_secret = ctx.build_secret("registry-config", "openshift-registry", config_kv)
+    registry_config_secret.create()
+
+    # 
+
+    shutil.rmtree(ctx.temp_dir)
 
 @cli.command()
 @click.pass_obj
