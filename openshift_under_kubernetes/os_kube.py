@@ -200,10 +200,10 @@ class OpenshiftKubeDeployer:
                     "env":
                     [{
                         "name": "OPENSHIFT_INTERNAL_ADDRESS",
-                        "value": "https://" + self.os_internal_ip + ":8443"
+                        "value": "https://" + self.os_internal_ip
                     }, {
                         "name": "OPENSHIFT_EXTERNAL_ADDRESS",
-                        "value": "https://" + self.os_external_ip + ":8443"
+                        "value": "https://" + self.os_external_ip
                     }, {
                         "name": "ETCD_ADDRESS",
                         "value": "http://etcd:4001"
@@ -294,7 +294,7 @@ class OpenshiftKubeDeployer:
                 "ports":
                 [{
                     "name": "web",
-                    "port": 8443,
+                    "port": 443,
                     "targetPort": "web"
                 }],
                 "selector":
@@ -342,23 +342,47 @@ class OpenshiftKubeDeployer:
         # Fix path to kubeconfig
         ya["masterClients"]["externalKubernetesKubeConfig"] = "external-master.kubeconfig"
 
+        # Fix bind address
+        ya["assetConfig"]["servingInfo"]["bindAddress"] = "0.0.0.0:443"
+        ya["servingInfo"]["bindAddress"] = "0.0.0.0:443"
+
         # Re-serialize to yaml
         return yaml.dump(ya, default_flow_style=False)
 
-    def build_pvc(self, name, namespace, size):
-        return PersistentVolumeClaim(self.api,
-        {
-            "metadata":
+    def build_pvc(self, name, namespace, size, create_volume):
+        if not create_volume:
+            return PersistentVolumeClaim(self.api,
             {
-                "name": name,
-                "namespace": namespace
-            },
-            "spec":
+                "metadata":
+                {
+                    "name": name,
+                    "namespace": namespace
+                },
+                "spec":
+                {
+                    "accessModes": ["ReadWriteOnce"],
+                    "resources": {"requests": {"storage": size}}
+                }
+            })
+        # See https://github.com/kubernetes/kubernetes/issues/22792#issuecomment-195563296
+        else:
+            return PersistentVolumeClaim(self.api,
             {
-                "accessModes": ["ReadWriteOnce"],
-                "resources": {"requests": {"storage": size}}
-            }
-        })
+                "metadata":
+                {
+                    "name": name,
+                    "annotations":
+                    {
+                        "volume.alpha.kubernetes.io/storage-class": "foo"
+                    },
+                    "namespace": namespace
+                },
+                "spec":
+                {
+                    "accessModes": ["ReadWriteOnce"],
+                    "resources": {"requests": {"storage": size}}
+                }
+            })
 
     def build_etcd_rc(self, pvcn):
         return ReplicationController(self.api,
@@ -468,7 +492,7 @@ class OpenshiftKubeDeployer:
                             "image": "openshift/origin:" + os_version,
                             "name": "origin",
                             "args": ["start", "master", "--config=/config/master-config.yaml"],
-                            "ports": [{"containerPort": 8443, "name": "web"}],
+                            "ports": [{"containerPort": 443, "name": "web"}],
                             "volumeMounts": [{"mountPath": "/config", "name": "config", "readOnly": True}]
                         }],
                         "volumes":
@@ -511,3 +535,84 @@ class OpenshiftKubeDeployer:
 
         print("Done fetching config.")
         return config_secret
+
+    def escalate_admin_kubeconfig(self, temp_dir):
+        # Fist we need to fetch the config
+        ctx = self
+        if not self.init_with_checks():
+            print("Failed cursory checks.")
+            return False
+
+        if not ctx.consider_openshift_deployed:
+            print("I think OpenShift is not yet deployed. Use deploy first to create it.")
+            return False
+
+        secret = ctx.fetch_config_to_dir(temp_dir)
+        conf_path = temp_dir + "/admin.kubeconfig"
+        mconf_path = temp_dir + "/master-config.yaml"
+        if not os.path.exists(conf_path) or not os.path.exists(mconf_path):
+            print("Fetched config files but they don't contain admin.kubeconfig, something's wrong. Try getconfig.")
+            exit(1)
+
+        print("Escalating to system:admin via admin.kubeconfig...")
+        ctx.config_path = conf_path
+
+        # Do an initial load to verify that it is valid
+        self.context_override = None
+        if not self.load_and_check_config():
+            print("Unable to load/validate config.")
+            return False
+
+        # Pick the context for the public facing endpoint
+        master_conf = None
+        with open(mconf_path, 'r') as f:
+            master_conf = yaml.load(f)
+
+        pubUrl = master_conf["assetConfig"]["masterPublicURL"]
+        cctx = self.config.current_context
+        found_ctx = None
+        for ctx in self.config.contexts:
+            clun = self.config.contexts[ctx]["cluster"]
+            if not clun in self.config.clusters:
+                print("[warn] Cluster " + clun + " not valid, but in context " + ctx)
+                continue
+
+            # Grab the cluster
+            clu = self.config.clusters[clun]
+            if clu == None:
+                continue
+            if clu["server"] == pubUrl:
+                print("Found context " + ctx + " for public-facing endpoint " + pubUrl)
+                found_ctx = ctx
+                break
+
+        if found_ctx == None:
+            print("[warn] Unable to find a context matching public url " + pubUrl + ", continuing with " + cctx)
+        else:
+            cctx = found_ctx
+        self.context_override = cctx
+
+        print("Re-checking connection with escalated permissions...")
+        # This time we will override the context
+        if not self.init_with_checks():
+            print("Failed checks, make sure admin.kubeconfig is valid.")
+            return False
+
+        # We are now using the OpenShift admin connection.
+        return True
+
+    # Checks the OpenShift users list
+    def get_openshift_users(self):
+        url = self.api.url + "/oapi/v1/users"
+        res = self.api.session.get(url).text
+        return json.loads(res)["items"]
+
+    # Checks the openshift cluster role binding list
+    def get_openshift_cluster_rolebindings(self):
+        url = self.api.url + "/oapi/v1/clusterrolebindings"
+        res = self.api.session.get(url).text
+        return json.loads(res)["items"]
+
+    def put_openshift_cluster_rolebinding(self, rb):
+        url = self.api.url + "/oapi/v1/clusterrolebindings/" + rb["metadata"]["name"]
+        self.api.session.put(url, json=rb)

@@ -43,10 +43,11 @@ def info(ctx):
 
 @cli.command()
 @click.option("--persistent-volume", default="openshift-etcd1", prompt=True, help="Name of existing PersistentVolume of at least 2Gi size for storage")
+@click.option("--create-volume/--no-create-volume", default=False, help="tell Kubernetes to create the volume (alpha feature)", envvar="OPENSHIFT_AUTOCREATE_VOLUME")
 @click.option("--public-hostname", default=None, help="public hostname that will be DNSd to the public IP", envvar="OPENSHIFT_PUBLIC_DNS")
 @click.option("--load-balancer/--no-load-balancer", default=True, help="use load balancer, otherwise node port", envvar="OPENSHIFT_CREATE_LOADBALANCER")
 @click.pass_obj
-def deploy(ctx, persistent_volume, load_balancer, public_hostname):
+def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume):
     """Deploy OpenShift to the cluster."""
     if not ctx.init_with_checks():
         print("Failed cursory checks, exiting.")
@@ -82,7 +83,7 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
     ctx.create_osdeploy_namespace()
 
     # Check the persistentvolume exists
-    if ctx.find_persistentvolume(persistent_volume) == None:
+    if not create_volume and ctx.find_persistentvolume(persistent_volume) == None:
         print(" [!] persistentvolume with name " + persistent_volume + " does not exist. Did you create it?")
         exit(1)
 
@@ -211,7 +212,7 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname):
     openshift_config_secret.create()
 
     # Starting etcd setup... build PersistentVolumeClaim
-    etcd_pvc = ctx.build_pvc("openshift-etcd1", "openshift-origin", "2Gi")
+    etcd_pvc = ctx.build_pvc("openshift-etcd1", "openshift-origin", "2Gi", create_volume)
     etcd_pvc.create()
 
     # Create the etcd controller
@@ -367,6 +368,70 @@ def editconfig(ctx):
         print("Something went wrong restarting openshift, do it yourself please!")
 
     shutil.rmtree(ctx.temp_dir)
+
+@cli.command()
+@click.option("--username", default=None, prompt=True, help="username to alter", envvar="OPENSHIFT_TARGET_USERNAME")
+@click.option("--role", prompt=True, default="cluster-admins", help="role to add", envvar="OPENSHIFT_TARGET_ROLE")
+@click.pass_obj
+def addclusterrole(ctx, username, role):
+    """Adds a CLUSTER role to a user by directly querying the cluster."""
+    if role != "cluster-admins":
+        print("[warn] It's really not advisable to assign most cluster-wide roles to users.")
+
+    admin_username = username
+    ctx.temp_dir = tempfile.mkdtemp()
+    if not ctx.escalate_admin_kubeconfig(ctx.temp_dir):
+        print("Unable to escalate permissions using admin.kubeconfig, make sure it's valid.")
+        exit(1)
+
+    # We have admin permissions in openshift now.
+    shutil.rmtree(ctx.temp_dir)
+
+    # Attempt to query the users list
+    # PyKube doesn't really support OpenShift so let's build urls ourself
+    user_list = ctx.get_openshift_users()
+    known_uid = []
+    user = None
+    for usr in user_list:
+        name = usr["metadata"]["name"]
+        known_uid.append(name)
+        if name == admin_username:
+            user = usr
+    if user == None:
+        print("Unable to find user '" + admin_username + "' in username list.")
+        print("Known users: " + ", ".join(known_uid))
+        exit(1)
+
+    # User exists, check his roles
+    if user["groups"] == None:
+        user["groups"] = ["none"]
+    print("Found user " + admin_username + ", groups: " + ", ".join(user["groups"]))
+
+    # Add role
+    cluster_role_bindings = ctx.get_openshift_cluster_rolebindings()
+    mod_role = None
+    for rolex in cluster_role_bindings:
+        if rolex["metadata"]["name"] == role:
+            mod_role = rolex
+            break
+    if mod_role == None:
+        print("Unable to find cluster role named '" + role + "', try adding an s to the end of it.")
+        exit(1)
+
+    # Check the usernames
+    if mod_role["userNames"] == None:
+        mod_role["userNames"] = []
+    unames = mod_role["userNames"]
+    if admin_username in unames:
+        print("User " + admin_username + " already in role binding " + mod_role["metadata"]["name"])
+        print("Skipping update...")
+    else:
+        unames.append(admin_username)
+        # patch the role binding
+        print("Patching role binding...")
+        ctx.put_openshift_cluster_rolebinding(mod_role)
+
+    print("Done.")
 
 def main():
     cli()
