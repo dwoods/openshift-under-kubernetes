@@ -1,0 +1,1 @@
+include openshift_under_kubernetes/resources/scripts/create-config.sh
