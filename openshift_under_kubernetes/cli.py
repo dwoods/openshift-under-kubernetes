@@ -11,6 +11,7 @@ from pkg_resources import resource_string, resource_listdir
 from subprocess import call
 from .os_kube import OpenshiftKubeDeployer
 from .more_objects import PersistentVolume
+from .util import deepupdate
 from pykube.objects import Pod
 
 EDITOR = os.environ.get('EDITOR','vim')
@@ -46,8 +47,9 @@ def info(ctx):
 @click.option("--create-volume/--no-create-volume", default=False, help="tell Kubernetes to create the volume (alpha feature)", envvar="OPENSHIFT_AUTOCREATE_VOLUME")
 @click.option("--public-hostname", default=None, help="public hostname that will be DNSd to the public IP", envvar="OPENSHIFT_PUBLIC_DNS")
 @click.option("--load-balancer/--no-load-balancer", default=True, help="use load balancer, otherwise node port", envvar="OPENSHIFT_CREATE_LOADBALANCER")
+@click.option("--master-config-override", default=None, help="file with master-config.yaml overrides", envvar="OPENSHIFT_MASTER_CONFIG", type=click.Path(exists=True))
 @click.pass_obj
-def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume):
+def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume, master_config_override):
     """Deploy OpenShift to the cluster."""
     if not ctx.init_with_checks():
         print("Failed cursory checks, exiting.")
@@ -178,16 +180,24 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume
     # Do some processing on the master-config yaml
     conf = None
     with open(ctx.temp_dir + '/config/master-config.yaml') as f:
-        conf = f.read()
+        conf = yaml.load(f)
     conf = ctx.fix_master_config(conf)
 
     # Write the serviceaccounts file again
     with open(ctx.temp_dir + "/config/serviceaccounts.public.key", 'w') as f:
         f.write(ctx.service_cert)
 
+    # Load patches if needed
+    master_config_override_kv = None
+    if master_config_override != None:
+        print("Loading " + master_config_override + "...")
+        with open(master_config_override, 'r') as f:
+            master_config_override_kv = yaml.load(f)
+        conf = deepupdate(conf, master_config_override_kv)
+
     # Write the fixed master config
     with open(ctx.temp_dir + "/config/master-config.yaml", 'w') as f:
-        f.write(conf)
+        f.write(yaml.dump(conf, default_flow_style=False))
 
     # Allow the user to edit the openshift config last second
     print("Generated updated master-config.yaml.")

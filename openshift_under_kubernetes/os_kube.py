@@ -321,10 +321,7 @@ class OpenshiftKubeDeployer:
             time.sleep(0.5)
             service.reload()
 
-    def fix_master_config(self, conf):
-        # Parse to yaml
-        ya = yaml.load(conf)
-
+    def fix_master_config(self, ya):
         # Fix ca
         ya["kubeletClientInfo"]["ca"] = "ca.crt"
         ya["kubeletClientInfo"]["certFile"] = "master.kubelet-client.crt"
@@ -346,8 +343,7 @@ class OpenshiftKubeDeployer:
         ya["assetConfig"]["servingInfo"]["bindAddress"] = "0.0.0.0:443"
         ya["servingInfo"]["bindAddress"] = "0.0.0.0:443"
 
-        # Re-serialize to yaml
-        return yaml.dump(ya, default_flow_style=False)
+        return ya
 
     def build_pvc(self, name, namespace, size, create_volume):
         if not create_volume:
