@@ -6,11 +6,16 @@ import json
 import base64
 import copy
 import yaml
+import random
+import string
 
 from pykube.config import KubeConfig
 from pykube.http import HTTPClient
 from pykube.objects import Pod, Namespace, Service, ReplicationController, Secret
 from .more_objects import PersistentVolume, PersistentVolumeClaim
+
+def random_string(size=6, chars=string.ascii_uppercase + string.digits):
+    return ''.join(random.choice(chars) for x in range(size))
 
 '''
 Deploys OpenShift to Kubernetes
@@ -459,6 +464,143 @@ class OpenshiftKubeDeployer:
                     "purpose": "etcd"
                 },
                 "type": "ClusterIP"
+            }
+        })
+
+    def build_registry_svc(self, namespace):
+        return Service(self.api,
+        {
+            "metadata":
+            {
+                "labels":
+                {
+                    "app": "registry",
+                    "role": "registry",
+                    "tier": "backend",
+                    # Not sure if this label is important
+                    "docker-registry": "default"
+                },
+                "name": "cluster-registry",
+                "namespace": namespace
+            },
+            "spec":
+            {
+                "ports":
+                [{
+                    "name": "registry",
+                    "targetPort": "registry",
+                    "port": 5000,
+                    "protocol": "TCP"
+                }],
+                "selector":
+                {
+                    "docker-registry": "default"
+                }
+            }
+        })
+    def build_registry_rc(self, ca_data, client_cert_data, server, namespace, pvcn):
+        return ReplicationController(self.api,
+        {
+            "metadata":
+            {
+                "labels":
+                {
+                    "app": "registry",
+                    "role": "registry",
+                    "tier": "backend",
+                    # Not sure if this label is important
+                    "docker-registry": "default"
+                },
+                "name": "cluster-registry",
+                "namespace": namespace
+            },
+            "spec":
+            {
+                "replicas": 1,
+                "selector":
+                {
+                    "app": "registry",
+                    "role": "registry",
+                    "tier": "backend",
+                    "docker-registry": "default"
+                },
+                "template":
+                {
+                    "metadata":
+                    {
+                        # I believe selector is filled with this on default
+                        # Consider removing the extra info
+                        "labels":
+                        {
+                            "app": "registry",
+                            "role": "registry",
+                            "tier": "backend",
+                            "docker-registry": "default"
+                        }
+                    },
+                    "spec":
+                    {
+                        "containers":
+                        [{
+                            "name": "registry",
+                            # Hardcode this for now. Allow an option later.
+                            # This is because the env might need changing with newer versions
+                            "image": "openshift/origin-docker-registry:v1.1.3",
+                            "imagePullPolicy": "IfNotPresent",
+                            "livenessProbe":
+                            {
+                                "failureThreshold": 3,
+                                "httpGet":
+                                {
+                                    "path": "/healthz",
+                                    "port": 5000,
+                                    "scheme": "HTTP"
+                                },
+                                "initialDelaySeconds": 10,
+                                "periodSeconds": 10,
+                                "successThreshold": 1,
+                                "timeoutSeconds": 5
+                            },
+                            "ports": [{"containerPort": 5000, "protocol": "TCP", "name": "registry"}],
+                            "volumeMounts": [{"mountPath": "/registry", "name": "registry-storage"}],
+                            "env":
+                            [{
+                                "name": "OPENSHIFT_CA_DATA",
+                                "value": ca_data
+                            }, {
+                                "name": "OPENSHIFT_CERT_DATA",
+                                "value": client_cert_data
+                            }, {
+                                "name": "OPENSHIFT_INSECURE",
+                                "value": "true" if server.startswith("http://") else "false"
+                            }, {
+                                "name": "OPENSHIFT_KEY_DATA",
+                                "value": client_cert_data
+                            }, {
+                                "name": "OPENSHIFT_MASTER",
+                                "value": server
+                            }, {
+                                # I'm guessing this tricks the registry into binding to port 5000
+                                # Without actually setting an address
+                                "name": "REGISTRY_HTTP_ADDR",
+                                "value": ":5000"
+                            }, {
+                                "name": "REGISTRY_HTTP_NET",
+                                "value": "tcp"
+                            }, {
+                                "name": "REGISTRY_HTTP_SECRET",
+                                "value": random_string(10)
+                            }]
+                        }],
+                        "volumes":
+                        [{
+                            "name": "registry-storage",
+                            "persistentVolumeClaim": {"claimName": pvcn}
+                        }],
+                        "restartPolicy": "Always",
+                        "dnsPolicy": "ClusterFirst"
+                    }
+                }
             }
         })
 
