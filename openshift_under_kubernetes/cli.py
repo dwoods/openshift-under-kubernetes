@@ -6,12 +6,14 @@ import base64
 import tarfile
 import time
 import shutil
+import random
 
 from pkg_resources import resource_string, resource_listdir
 from subprocess import call
 from .os_kube import OpenshiftKubeDeployer
 from .more_objects import PersistentVolume
 from pykube.objects import Pod
+from pykube.config import KubeConfig
 
 EDITOR = os.environ.get('EDITOR','vim')
 
@@ -302,8 +304,9 @@ def getconfig(ctx, config_output_dir):
 @cli.command()
 @click.option("--persistent-volume", default="openshift-registry", help="Name of existing PersistentVolume of at least 2Gi size for storage")
 @click.option("--create-volume/--no-create-volume", default=False, help="tell Kubernetes to create the volume (alpha feature)", envvar="OPENSHIFT_AUTOCREATE_REGISTRY_VOLUME")
+@click.option("--volume-size", default="10Gi", help="how big should the storage for the registry be", envvar="OPENSHIFT_REGISTRY_VOLUME_SIZE")
 @click.pass_obj
-def deployregistry(ctx, persistent_volume, create_volume):
+def deployregistry(ctx, persistent_volume, create_volume, volume_size):
     """Deploy an OpenShift Registry to the cluster."""
     if not ctx.init_with_checks():
         print("Failed cursory checks, exiting.")
@@ -332,29 +335,39 @@ def deployregistry(ctx, persistent_volume, create_volume):
     # Fetch the config to the local dir
     ctx.fetch_config_to_dir(ctx.temp_dir)
 
-    # Grab the registry config object
-    reg_config = None
-    with open(ctx.temp_dir + "/openshift-registry.kubeconfig") as f:
-        reg_config = yaml.load(f)
+    master_conf = None
+    with open(ctx.temp_dir + "/master-config.yaml", 'r') as f:
+        master_conf = yaml.load(f)
+    internal_url = master_conf["oauthConfig"]["masterURL"]
+
+    cluster_ca = None
+    with open(ctx.temp_dir + "/ca.crt", 'r') as f:
+        cluster_ca = f.read()
+
+    client_key = None
+    client_cert = None
+    with open(ctx.temp_dir + "/openshift-registry.kubeconfig", 'r') as f:
+        reg_conf = yaml.load(f)
+        client_key = base64.b64decode(reg_conf["users"][0]["user"]["client-key-data"]).decode('ascii')
+        client_cert = base64.b64decode(reg_conf["users"][0]["user"]["client-certificate-data"]).decode('ascii')
 
     # Create the namespaces
     ctx.create_namespace("openshift-registry")
 
+    # Create the pvc
+    reg_pvc = ctx.build_pvc("registry-storage", "openshift-registry", volume_size, create_volume)
+    reg_pvc.create()
+
     # Build the registry replication controller
     # I do this this way because I would prefer to not use a deployment here.
-    reg_rc = ctx.build_registry_rc(reg_config, "openshift-registry")
+    reg_rc = ctx.build_registry_rc(cluster_ca, client_cert, internal_url, "openshift-registry", "registry-storage")
+    reg_rc.create()
 
-    # Build the secret
-    create_config_secret_kv = {"create-config.sh": create_config_script}
-    create_config_secret = ctx.build_secret("create-config-script", "openshift-deploy", create_config_secret_kv)
-    create_config_secret.create()
+    # Create the service
+    reg_svc = ctx.build_registry_svc("openshift-registry")
+    reg_svc.create()
 
-    # Build the secret
-    registry_config_secret = ctx.build_secret("registry-config", "openshift-registry", config_kv)
-    registry_config_secret.create()
-
-    # 
-
+    print("Done!")
     shutil.rmtree(ctx.temp_dir)
 
 @cli.command()

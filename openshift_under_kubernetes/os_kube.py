@@ -6,11 +6,16 @@ import json
 import base64
 import copy
 import yaml
+import random
+import string
 
 from pykube.config import KubeConfig
 from pykube.http import HTTPClient
 from pykube.objects import Pod, Namespace, Service, ReplicationController, Secret
 from .more_objects import PersistentVolume, PersistentVolumeClaim
+
+def random_string(size=6, chars=string.ascii_uppercase + string.digits):
+    return ''.join(random.choice(chars) for x in range(size))
 
 '''
 Deploys OpenShift to Kubernetes
@@ -466,7 +471,38 @@ class OpenshiftKubeDeployer:
             }
         })
 
-    def build_registry_rc(self, ca_data, client_cert_data, server, namespace):
+    def build_registry_svc(self, namespace):
+        return Service(self.api,
+        {
+            "metadata":
+            {
+                "labels":
+                {
+                    "app": "registry",
+                    "role": "registry",
+                    "tier": "backend",
+                    # Not sure if this label is important
+                    "docker-registry": "default"
+                },
+                "name": "cluster-registry",
+                "namespace": namespace
+            },
+            "spec":
+            {
+                "ports":
+                [{
+                    "name": "registry",
+                    "targetPort": "registry",
+                    "port": 5000,
+                    "protocol": "TCP"
+                }],
+                "selector":
+                {
+                    "docker-registry": "default"
+                }
+            }
+        })
+    def build_registry_rc(self, ca_data, client_cert_data, server, namespace, pvcn):
         return ReplicationController(self.api,
         {
             "metadata":
@@ -489,7 +525,8 @@ class OpenshiftKubeDeployer:
                 {
                     "app": "registry",
                     "role": "registry",
-                    "tier": "backend"
+                    "tier": "backend",
+                    "docker-registry": "default"
                 },
                 "template":
                 {
@@ -501,7 +538,8 @@ class OpenshiftKubeDeployer:
                         {
                             "app": "registry",
                             "role": "registry",
-                            "tier": "backend"
+                            "tier": "backend",
+                            "docker-registry": "default"
                         }
                     },
                     "spec":
@@ -538,7 +576,7 @@ class OpenshiftKubeDeployer:
                                 "value": client_cert_data
                             }, {
                                 "name": "OPENSHIFT_INSECURE",
-                                "value": server.startswith("http://")
+                                "value": "true" if server.startswith("http://") else "false"
                             }, {
                                 "name": "OPENSHIFT_KEY_DATA",
                                 "value": client_cert_data
@@ -555,9 +593,16 @@ class OpenshiftKubeDeployer:
                                 "value": "tcp"
                             }, {
                                 "name": "REGISTRY_HTTP_SECRET",
-                                "value": "secret"
+                                "value": random_string(10)
                             }]
-                        }]
+                        }],
+                        "volumes":
+                        [{
+                            "name": "registry-storage",
+                            "persistentVolumeClaim": {"claimName": pvcn}
+                        }],
+                        "restartPolicy": "Always",
+                        "dnsPolicy": "ClusterFirst"
                     }
                 }
             }
