@@ -50,8 +50,9 @@ def info(ctx):
 @click.option("--public-hostname", default=None, help="public hostname that will be DNSd to the public IP", envvar="OPENSHIFT_PUBLIC_DNS")
 @click.option("--load-balancer/--no-load-balancer", default=True, help="use load balancer, otherwise node port", envvar="OPENSHIFT_CREATE_LOADBALANCER")
 @click.option("--master-config-override", default=None, help="file with master-config.yaml overrides", envvar="OPENSHIFT_MASTER_CONFIG", type=click.Path(exists=True))
+@click.option("--server-key", help="server.key from /srv/kubernetes/server.key", envvar="OPENSHIFT_SERVER_KEY_PATH", type=click.Path(exists=True))
 @click.pass_obj
-def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume, master_config_override):
+def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume, master_config_override, server_key):
     """Deploy OpenShift to the cluster."""
     if not ctx.init_with_checks():
         print("Failed cursory checks, exiting.")
@@ -90,19 +91,6 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume
     if not create_volume and ctx.find_persistentvolume(persistent_volume) == None:
         print(" [!] persistentvolume with name " + persistent_volume + " does not exist. Did you create it?")
         exit(1)
-
-    # Grab the service account key
-    servicekey_pod = ctx.create_servicekey_pod()
-
-    # Get the key
-    ctx.service_cert = ctx.observe_servicekey_pod(servicekey_pod)
-
-    # Kill the pod
-    servicekey_pod.delete()
-
-    # Save the key temporarily
-    with open(ctx.temp_dir + "/serviceaccounts.public.key", 'w') as f:
-        f.write(ctx.service_cert)
 
     # Create the namespaces
     ctx.create_namespace("openshift-origin")
@@ -186,8 +174,9 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume
     conf = ctx.fix_master_config(conf)
 
     # Write the serviceaccounts file again
-    with open(ctx.temp_dir + "/config/serviceaccounts.public.key", 'w') as f:
-        f.write(ctx.service_cert)
+    with open(server_key, 'r') as fs:
+        with open(ctx.temp_dir + "/config/serviceaccounts.public.key", 'w') as fd:
+            fd.write(fs.read())
 
     # Load patches if needed
     master_config_override_kv = None

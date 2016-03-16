@@ -137,32 +137,6 @@ class OpenshiftKubeDeployer:
     def create_osdeploy_namespace(self):
         self.create_namespace("openshift-deploy")
 
-    def create_servicekey_pod(self):
-        print("Creating servicekey fetch pod...")
-        po = Pod(self.api,
-        {
-            "metadata":
-            {
-                "name": "get-servicekey",
-                "labels":
-                {
-                    "purpose": "get-servicekey"
-                },
-                "namespace": "openshift-deploy"
-            },
-            "spec":
-            {
-                "containers":
-                [{
-                    "name": "get-servicekey",
-                    "image": "paralin/kube-get-servicekey:latest",
-                    "imagePullPolicy": "Always",
-                }],
-                "restartPolicy": "OnFailure"
-            }
-        })
-        po.create()
-        return po
 
     def build_secret(self, name, namespace, kv):
         print("Creating " + name + " secret...")
@@ -262,19 +236,7 @@ class OpenshiftKubeDeployer:
             elif stat == "Succeeded":
                 raise Exception("Unknown pod phase " + stat + ", expected this pod to be long-running.")
             else:
-                raise Exception("Unknown servicekey pod phase " + stat)
-
-    def observe_servicekey_pod(self, pod, wait_for_start=True):
-        if wait_for_start:
-            self.wait_for_pod_succeed(pod)
-
-        print("Checking logs...")
-        url = self.api.url + "/api/v1/namespaces/openshift-deploy/pods/get-servicekey/log"
-        cert = self.api.session.get(url).text
-        if "END PUBLIC KEY" not in cert:
-            raise Exception("get-servicekey container did not return the certificate.")
-        print("Retreived service public key successfully.")
-        return cert
+                raise Exception("Unknown pod phase " + stat)
 
     def observe_config_pod(self, pod, wait_for_start=True):
         if wait_for_start:
