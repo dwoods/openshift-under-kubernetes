@@ -316,11 +316,13 @@ def deployregistry(ctx, persistent_volume, create_volume, volume_size):
         print("Please deploy it first.")
         exit(1)
 
-    print()
-    if "openshift-registry" in ctx.namespace_names:
-        print("The namespace 'openshift-registry' exists, this indicates a potentially existing/broken registry.")
+    reg_svc = ctx.build_registry_svc("default")
+    if reg_svc.exists():
+        print("The service 'docker-registry' exists in 'default' namespace, this indicates a potentially existing/broken registry.")
         print("Refusing to continue, you should address this manually.")
         exit(1)
+
+    print()
 
     ctx.temp_dir = tempfile.mkdtemp()
     print("Preparing to execute deploy...")
@@ -351,19 +353,18 @@ def deployregistry(ctx, persistent_volume, create_volume, volume_size):
         client_cert = base64.b64decode(reg_conf["users"][0]["user"]["client-certificate-data"]).decode('ascii')
 
     # Create the namespaces
-    ctx.create_namespace("openshift-registry")
+    #ctx.create_namespace("default")
 
     # Create the pvc
-    reg_pvc = ctx.build_pvc("registry-storage", "openshift-registry", volume_size, create_volume)
+    reg_pvc = ctx.build_pvc("registry-storage", "default", volume_size, create_volume)
     reg_pvc.create()
 
     # Build the registry replication controller
     # I do this this way because I would prefer to not use a deployment here.
-    reg_rc = ctx.build_registry_rc(cluster_ca, client_cert, internal_url, "openshift-registry", "registry-storage")
+    reg_rc = ctx.build_registry_rc(cluster_ca, client_cert, internal_url, "default", "registry-storage")
     reg_rc.create()
 
     # Create the service
-    reg_svc = ctx.build_registry_svc("openshift-registry")
     reg_svc.create()
 
     print("Done!")

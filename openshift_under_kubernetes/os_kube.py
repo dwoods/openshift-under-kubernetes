@@ -442,7 +442,7 @@ class OpenshiftKubeDeployer:
                     # Not sure if this label is important
                     "docker-registry": "default"
                 },
-                "name": "cluster-registry",
+                "name": "docker-registry",
                 "namespace": namespace
             },
             "spec":
@@ -460,6 +460,7 @@ class OpenshiftKubeDeployer:
                 }
             }
         })
+
     def build_registry_rc(self, ca_data, client_cert_data, server, namespace, pvcn):
         return ReplicationController(self.api,
         {
