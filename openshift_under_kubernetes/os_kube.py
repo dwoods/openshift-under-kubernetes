@@ -331,7 +331,8 @@ class OpenshiftKubeDeployer:
 
     def fix_master_config(self, ya):
         # Fix ca
-        ya["kubeletClientInfo"]["ca"] = "ca.crt"
+        # ya["kubeletClientInfo"]["ca"] = "ca.crt"
+        ya["kubeletClientInfo"]["ca"] = ""
         ya["kubeletClientInfo"]["certFile"] = "master.kubelet-client.crt"
         ya["kubeletClientInfo"]["keyFile"] = "master.kubelet-client.key"
         ya["kubeletClientInfo"]["port"] = 10250
