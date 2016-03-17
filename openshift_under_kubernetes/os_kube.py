@@ -153,7 +153,10 @@ class OpenshiftKubeDeployer:
             "data": kv
         })
 
-    def build_config_pod(self, os_version="latest"):
+    def build_config_pod(self, os_version=""):
+        if len(os_version) == 0:
+            os_version = self.os_version
+
         print("Creating config generation pod...")
         return Pod(self.api,
         {
@@ -205,6 +208,44 @@ class OpenshiftKubeDeployer:
                 }, {
                     "name": "kube-config",
                     "secret": {"secretName": "kubeconfig"}
+                }],
+                "restartPolicy": "Never"
+            }
+        })
+
+    def build_execute_pod(self, command, admin_conf, os_version=""):
+        if len(os_version) == 0:
+            os_version = self.os_version
+
+        print("Creating command execution pod...")
+        name = "oskube-execute-" + random_string(4).lower()
+        command = "mkdir -p ~/.kube/ && echo \"$ADMIN_KUBECONFIG\" > ~/.kube/config && " + command
+        return Pod(self.api,
+        {
+            "metadata":
+            {
+                "name": name,
+                "labels":
+                {
+                    "purpose": "exec-command"
+                },
+                "namespace": "openshift-origin"
+            },
+            "spec":
+            {
+                "containers":
+                [{
+                    "name": "exec-command",
+                    "image": "openshift/origin:" + os_version,
+                    "imagePullPolicy": "Always",
+                    "command": ["/bin/bash"],
+                    "args": ["-c", command],
+                    "ports": [],
+                    "env":
+                    [{
+                        "name": "ADMIN_KUBECONFIG",
+                        "value": admin_conf
+                    }]
                 }],
                 "restartPolicy": "Never"
             }

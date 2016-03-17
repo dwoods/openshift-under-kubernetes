@@ -504,5 +504,40 @@ def addclusterrole(ctx, username, role):
 
     print("Done.")
 
+@cli.command()
+@click.option("--command", default="openshift ex diagnostics", help="command to run")
+@click.pass_obj
+def execute(ctx, command):
+    """Executes any of the OpenShift commands inside a pod with the admin kubeconfig mounted."""
+    if not ctx.init_with_checks():
+        print("Failed cursory checks, exiting.")
+        exit(1)
+
+    if not ctx.consider_openshift_deployed:
+        print("I think OpenShift is not yet deployed. Use deploy first to create it.")
+        exit(1)
+
+    # First grab the config to a folder
+    ctx.temp_dir = tempfile.mkdtemp()
+    ctx.fetch_config_to_dir(ctx.temp_dir)
+
+    # Read the admin.kubeconfig
+    admincfg = None
+    with open(ctx.temp_dir + "/admin.kubeconfig", 'r') as f:
+        admincfg = f.read()
+    shutil.rmtree(ctx.temp_dir)
+
+    # Create the pod
+    exec_pod = ctx.build_execute_pod(command, admincfg)
+    exec_pod.create()
+
+    print()
+    print("Remember to delete this pod after it's done executing.")
+    print("You can clean up all execute pods with this command:")
+    print("kubectl delete -l purpose=exec-command --namespace=openshift-origin")
+    print()
+    print("To view the result, use the command:")
+    print("kubectl logs --namespace=openshift-origin -f " + exec_pod.obj["metadata"]["name"])
+
 def main():
     cli()
