@@ -547,9 +547,7 @@ class OpenshiftKubeDeployer:
                         "containers":
                         [{
                             "name": "registry",
-                            # Hardcode this for now. Allow an option later.
-                            # This is because the env might need changing with newer versions
-                            "image": "openshift/origin-docker-registry:v1.1.3",
+                            "image": "openshift/origin-docker-registry:" + self.os_version,
                             "imagePullPolicy": "IfNotPresent",
                             "livenessProbe":
                             {
