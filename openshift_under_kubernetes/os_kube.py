@@ -516,7 +516,7 @@ class OpenshiftKubeDeployer:
                     # Not sure if this label is important
                     "docker-registry": "default"
                 },
-                "name": "cluster-registry",
+                "name": "docker-registry",
                 "namespace": namespace
             },
             "spec":
@@ -581,6 +581,9 @@ class OpenshiftKubeDeployer:
                                 "value": client_cert_data
                             }, {
                                 "name": "OPENSHIFT_MASTER",
+                                "value": server
+                            }, {
+                                "name": "KUBERNETES_MASTER",
                                 "value": server
                             }, {
                                 # I'm guessing this tricks the registry into binding to port 5000
