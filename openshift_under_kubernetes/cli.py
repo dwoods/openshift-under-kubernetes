@@ -304,8 +304,9 @@ def getconfig(ctx, config_output_dir):
 @click.option("--persistent-volume", default="openshift-registry", help="Name of existing PersistentVolume of at least 2Gi size for storage")
 @click.option("--create-volume/--no-create-volume", default=False, help="tell Kubernetes to create the volume (alpha feature)", envvar="OPENSHIFT_AUTOCREATE_REGISTRY_VOLUME")
 @click.option("--volume-size", default="10Gi", help="how big should the storage for the registry be", envvar="OPENSHIFT_REGISTRY_VOLUME_SIZE")
+@click.option("--registry-image", default="openshift/origin-docker-registry", help="registry image name", envvar="OPENSHIFT_REGISTRY_IMAGE")
 @click.pass_obj
-def deployregistry(ctx, persistent_volume, create_volume, volume_size):
+def deployregistry(ctx, persistent_volume, create_volume, volume_size, registry_image):
     """Deploy an OpenShift Registry to the cluster."""
     if not ctx.init_with_checks():
         print("Failed cursory checks, exiting.")
@@ -316,9 +317,10 @@ def deployregistry(ctx, persistent_volume, create_volume, volume_size):
         print("Please deploy it first.")
         exit(1)
 
-    reg_svc = ctx.build_registry_svc("default")
-    if reg_svc.exists():
-        print("The service 'docker-registry' exists in 'default' namespace, this indicates a potentially existing/broken registry.")
+    # Build temporary object to check existence
+    reg_rc = ctx.build_registry_rc("", "", "", "", "default", "registry-storage", "")
+    if reg_rc.exists():
+        print("The replication controller 'docker-registry' exists in 'default' namespace, this indicates a potentially existing/broken registry.")
         print("Refusing to continue, you should address this manually.")
         exit(1)
 
@@ -357,15 +359,22 @@ def deployregistry(ctx, persistent_volume, create_volume, volume_size):
 
     # Create the pvc
     reg_pvc = ctx.build_pvc("registry-storage", "default", volume_size, create_volume)
-    reg_pvc.create()
+    if not reg_pvc.exists():
+        reg_pvc.create()
 
     # Build the registry replication controller
     # I do this this way because I would prefer to not use a deployment here.
-    reg_rc = ctx.build_registry_rc(cluster_ca, client_cert, internal_url, "default", "registry-storage")
+    reg_rc = ctx.build_registry_rc(cluster_ca, client_cert, client_key, internal_url, "default", "registry-storage", registry_image)
+    # Needs a securitycontext that allows this
+    if create_volume:
+        reg_rc.obj["spec"]["template"]["spec"]["securityContext"] = {"fsGroup": 1001}
+    # reg_rc.obj["spec"]["template"]["spec"]["securityContext"] = {"runAsUser": 0}
     reg_rc.create()
 
     # Create the service
-    reg_svc.create()
+    reg_svc = ctx.build_registry_svc("default")
+    if not reg_svc.exists():
+        reg_svc.create()
 
     print("Done!")
     shutil.rmtree(ctx.temp_dir)

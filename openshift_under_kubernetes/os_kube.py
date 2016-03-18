@@ -503,7 +503,7 @@ class OpenshiftKubeDeployer:
             }
         })
 
-    def build_registry_rc(self, ca_data, client_cert_data, server, namespace, pvcn):
+    def build_registry_rc(self, ca_data, client_cert_data, client_key_data, server, namespace, pvcn, registry_image):
         return ReplicationController(self.api,
         {
             "metadata":
@@ -548,7 +548,7 @@ class OpenshiftKubeDeployer:
                         "containers":
                         [{
                             "name": "registry",
-                            "image": "openshift/origin-docker-registry:" + self.os_version,
+                            "image": registry_image + ":" + self.os_version,
                             "imagePullPolicy": "IfNotPresent",
                             "livenessProbe":
                             {
@@ -578,7 +578,7 @@ class OpenshiftKubeDeployer:
                                 "value": "true" if server.startswith("http://") else "false"
                             }, {
                                 "name": "OPENSHIFT_KEY_DATA",
-                                "value": client_cert_data
+                                "value": client_key_data
                             }, {
                                 "name": "OPENSHIFT_MASTER",
                                 "value": server
