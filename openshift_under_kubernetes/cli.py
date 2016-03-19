@@ -45,6 +45,36 @@ def info(ctx):
     exit(0 if ctx.init_with_checks() and ctx.consider_openshift_deployed else 1)
 
 @cli.command()
+@click.option("--public-hostname", default=None, help="public hostname that will be DNSd to the public IP", envvar="OPENSHIFT_PUBLIC_DNS")
+@click.pass_obj
+def changehostname(ctx, public_hostname):
+    """re-generates certificates for a new external hostname"""
+
+    if not ctx.init_with_checks():
+        print("Failed cursory checks, exiting.")
+        exit(1)
+
+    if not ctx.consider_openshift_deployed:
+        print("I think OpenShift is not already deployed. Use deploy first to initially create it.")
+        exit(1)
+
+    print("Loading service information...")
+    os_service = ctx.create_os_service(public_hostname != None)
+    os_service.reload()
+
+    internal_os_ip = os_service.obj["spec"]["clusterIP"]
+    ctx.os_internal_ip = internal_os_ip
+    print("Internal IP: " + internal_os_ip)
+    external_os_ip = public_hostname if public_hostname != None else internal_os_ip
+    print("External IP: " + external_os_ip)
+
+    print("Fetching existing config...")
+    ctx.temp_dir = tempfile.mkdtemp()
+    ctx.fetch_config_to_dir(ctx.temp_dir)
+
+    print("Re-gen config bundle...")
+
+@cli.command()
 @click.option("--persistent-volume", default="openshift-etcd1", help="Name of existing PersistentVolume of at least 2Gi size for storage")
 @click.option("--create-volume/--no-create-volume", default=False, help="tell Kubernetes to create the volume (alpha feature)", envvar="OPENSHIFT_AUTOCREATE_VOLUME")
 @click.option("--public-hostname", default=None, help="public hostname that will be DNSd to the public IP", envvar="OPENSHIFT_PUBLIC_DNS")
