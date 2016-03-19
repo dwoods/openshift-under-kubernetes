@@ -54,6 +54,10 @@ def info(ctx):
 @click.pass_obj
 def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume, master_config_override, server_key):
     """Deploy OpenShift to the cluster."""
+    if not load_balancer and public_hostname != None:
+        print("You must specify --load-balancer with --public-hostname, I can't map a public hostname without a load balancer.")
+        exit(1)
+
     if not ctx.init_with_checks():
         print("Failed cursory checks, exiting.")
         exit(1)
@@ -109,19 +113,24 @@ def deploy(ctx, persistent_volume, load_balancer, public_hostname, create_volume
     else:
         os_service.reload()
 
-    tmp = os_service.obj["status"]["loadBalancer"]["ingress"][0]
-    external_os_ip = None
-    external_is_hostname = False
-    if "hostname" in tmp:
-        external_os_ip = tmp["hostname"]
-        external_is_hostname = True
-    else:
-        external_os_ip = tmp["ip"]
     internal_os_ip = os_service.obj["spec"]["clusterIP"]
     ctx.os_internal_ip = internal_os_ip
-    ctx.os_external_ip = external_os_ip
 
-    print("External OpenShift IP: " + external_os_ip)
+    if load_balancer:
+        tmp = os_service.obj["status"]["loadBalancer"]["ingress"][0]
+        external_os_ip = None
+        external_is_hostname = False
+        if "hostname" in tmp:
+            external_os_ip = tmp["hostname"]
+            external_is_hostname = True
+        else:
+            external_os_ip = tmp["ip"]
+        ctx.os_external_ip = external_os_ip
+        print("External OpenShift IP: " + external_os_ip)
+    else:
+        external_os_ip = internal_os_ip
+        print("External OpenShift IP: nodes (node port)")
+
     print("Internal OpenShift IP: " + internal_os_ip)
 
     if public_hostname != None:
