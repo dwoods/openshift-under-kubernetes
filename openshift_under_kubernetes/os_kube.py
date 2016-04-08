@@ -415,7 +415,7 @@ class OpenshiftKubeDeployer:
                             "image": "openshift/etcd-20-centos7",
                             "ports": [{"containerPort": 4001, "name": "client"}, {"containerPort": 7001, "name": "server"}],
                             "command": ["/usr/local/bin/etcd"],
-                            "args": ["--data-dir", "/var/lib/etcd", "--name", "openshift-etcd1"],
+                            "args": ["--data-dir", "/var/lib/etcd"],
                             "env":
                             [{
                                 "name": "ETCD_NUM_MEMBERS",
@@ -423,6 +423,9 @@ class OpenshiftKubeDeployer:
                             }, {
                                 "name": "ETCD_LISTEN_CLIENT_URLS",
                                 "value": "http://0.0.0.0:2379,http://0.0.0.0:4001"
+                            }, {
+                                "name": "ETCD_FORCE_NEW_CLUSTER",
+                                "value": "true"
                             }],
                             "volumeMounts":
                             [{
