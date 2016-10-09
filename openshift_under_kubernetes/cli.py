@@ -21,7 +21,7 @@ EDITOR = os.environ.get('EDITOR','vim')
 @click.group()
 @click.option("--config", default="~/.kube/config", help="kube config path", envvar="KUBE_CONFIG", type=click.Path())
 @click.option("--context", default=None, help="kube context", envvar="KUBE_CONTEXT")
-@click.option("--openshift-version", default="1.3.0-alpha.3", help="force openshift version (default 1.3.0-alpha.3)")
+@click.option("--openshift-version", default="1.4.0-alpha.0", help="force openshift version (default 1.3.0-alpha.3)")
 @click.option("--secure/--no-secure", default=False, help="enables https checking", envvar="KUBE_SESSION_SECURE")
 @click.option("-y", help="auto-answer for all confirmations", is_flag=True)
 @click.pass_context
